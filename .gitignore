@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments and Secrets
+.env
+venv/
+.venv/
+env/
+ENV/
+
+# Audio temporary files
+*.wav
+*.mp3
+*.ogg
