@@ -22,6 +22,7 @@ client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 SAMPLE_RATE = 16000
 CHANNELS = 1
 TTS_VOICE = os.getenv("TTS_VOICE", "en-US-GuyNeural")  # e.g., en-US-GuyNeural, en-US-AriaNeural, en-US-JennyNeural
+GROQ_LLM_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
 
 def record_audio() -> np.ndarray:
     """Captures microphone input using Press-Enter push-to-talk."""
@@ -82,13 +83,13 @@ def speech_to_text(file_path: str) -> str:
 
 
 def generate_llm_response(prompt: str, history: list) -> str:
-    """Generates conversational response using Groq Llama 3.3 / 3.1."""
+    """Generates conversational response using Groq LLM."""
     if not client:
         raise ValueError("GROQ_API_KEY is not configured in .env file.")
 
     history.append({"role": "user", "content": prompt})
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=GROQ_LLM_MODEL,
         messages=history,
         max_tokens=150,
         temperature=0.7
@@ -127,8 +128,8 @@ def text_to_speech_and_play(text: str) -> None:
 def main():
     print("=========================================================")
     print("   Voice AI Prototype (Groq + Edge-TTS Alternative)      ")
-    print("   - STT: Groq Whisper-large-v3                          ")
-    print("   - LLM: Groq Llama-3.3-70b-versatile                   ")
+    print("   - STT: Groq Whisper (whisper-large-v3-turbo)          ")
+    print(f"   - LLM: Groq ({GROQ_LLM_MODEL})")
     print("   - TTS: Microsoft Edge Neural TTS (100% Free)          ")
     print("=========================================================")
 
