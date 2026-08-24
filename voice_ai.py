@@ -23,7 +23,6 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 TTS_VOICE = os.getenv("TTS_VOICE", "en-US-GuyNeural")  # e.g., en-US-GuyNeural, en-US-AriaNeural, en-US-JennyNeural
 
-
 def record_audio() -> np.ndarray:
     """Captures microphone input using Press-Enter push-to-talk."""
     input("\n[Press Enter to START recording]")
@@ -61,18 +60,25 @@ def save_wav_temp(audio_np: np.ndarray) -> str:
 
 
 def speech_to_text(file_path: str) -> str:
-    """Converts spoken audio file to English text using Groq Whisper (whisper-large-v3)."""
+    """Converts spoken audio file to English text using Groq Whisper (whisper-large-v3-turbo)."""
     if not client:
         raise ValueError("GROQ_API_KEY is not configured in .env file.")
 
-    with open(file_path, "rb") as audio_file:
+    with open(file_path, "rb") as file:
         transcript = client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=audio_file,
-            language="en",
-            response_format="json"
+            file=(file_path, file.read()),
+            model="whisper-large-v3-turbo",
+            temperature=0,
+            response_format="verbose_json",
+            language="en"
         )
-    return transcript.text.strip()
+    
+    # Handle response text from verbose_json transcription object
+    if hasattr(transcript, "text"):
+        return transcript.text.strip()
+    elif isinstance(transcript, dict):
+        return transcript.get("text", "").strip()
+    return str(transcript).strip()
 
 
 def generate_llm_response(prompt: str, history: list) -> str:

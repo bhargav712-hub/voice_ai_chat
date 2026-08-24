@@ -15,3 +15,8 @@ ENV/
 *.wav
 *.mp3
 *.ogg
+*.m4a
+
+# IDE settings
+.vscode/
+.idea/
