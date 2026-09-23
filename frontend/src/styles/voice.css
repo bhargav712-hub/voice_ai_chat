@@ -1,0 +1,380 @@
+@import "tailwindcss";
+
+@theme {
+  /* Mercury Color Tokens */
+  --color-onyx-canvas: #171721;
+  --color-graphite-card: #1e1e2a;
+  --color-obsidian-button: #272735;
+  --color-slate-border: #70707d;
+  --color-mist-border: #e2e3ed;
+  --color-ash-text: #c3c3cc;
+  --color-ivory-text: #ededf3;
+  --color-cobalt: #5266eb;
+  --color-pure-white: #ffffff;
+
+  /* Typography */
+  --font-arcadia: 'arcadia', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-arcadiadisplay: 'arcadiaDisplay', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Typography Scale */
+  --text-caption: 12px;
+  --text-body-sm: 14px;
+  --text-body: 16px;
+  --text-body-lg: 18px;
+  --text-subheading: 21px;
+  --text-heading-sm: 28px;
+  --text-heading: 32px;
+  --text-heading-lg: 42px;
+  --text-display: 65px;
+
+
+  /* Border Radius */
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-3xl: 32px;
+  --radius-3xl-2: 40px;
+}
+
+:root {
+  /* Mercury CSS Custom Properties */
+  --color-onyx-canvas: #171721;
+  --color-graphite-card: #1e1e2a;
+  --color-obsidian-button: #272735;
+  --color-slate-border: #70707d;
+  --color-mist-border: #e2e3ed;
+  --color-ash-text: #c3c3cc;
+  --color-ivory-text: #ededf3;
+  --color-cobalt: #5266eb;
+  --color-pure-white: #ffffff;
+
+  --font-weight-regular: 400;
+  --font-weight-emphasis: 480;
+
+  --radius-cards: 12px;
+  --radius-buttons: 32px;
+  --radius-pills: 40px;
+}
+
+/* Global Reset & Body */
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-onyx-canvas);
+  color: var(--color-ivory-text);
+  font-family: var(--font-arcadia);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Mercury Orb Visual States (Cobalt & Onyx Monochromatic Discipline) ── */
+.orb-idle {
+  background: radial-gradient(circle at 35% 35%, #2a2a3c, #171721);
+  border: 1.5px solid rgba(226, 227, 237, 0.18);
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.6), inset 0 2px 8px rgba(255, 255, 255, 0.08);
+}
+.orb-idle:hover {
+  border-color: rgba(82, 102, 235, 0.6);
+  box-shadow: 0 0 28px rgba(82, 102, 235, 0.25), inset 0 2px 12px rgba(255, 255, 255, 0.12);
+}
+
+.orb-listening-active {
+  background: radial-gradient(circle at 35% 35%, #5266eb, #1e1e2a);
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 35px rgba(82, 102, 235, 0.5), inset 0 0 15px rgba(255, 255, 255, 0.2);
+  animation: mercuryPulse 2s ease-in-out infinite;
+}
+
+.orb-listening-high {
+  background: radial-gradient(circle at 30% 30%, #ffffff 0%, #5266eb 40%, #171721 100%);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 45px rgba(82, 102, 235, 0.75), inset 0 0 20px rgba(255, 255, 255, 0.4);
+  animation: mercuryPulseHigh 1.2s ease-in-out infinite;
+}
+
+.orb-speaking {
+  background: radial-gradient(circle at 35% 35%, #5266eb, #272735);
+  border: 1.5px solid rgba(226, 227, 237, 0.4);
+  box-shadow: 0 0 30px rgba(82, 102, 235, 0.45);
+  animation: mercuryPulse 1.8s ease-in-out infinite;
+}
+
+/* ── User Speaking State (Vivid Violet / Purple Resonance — matching reference) ── */
+.orb-user-speaking {
+  background: radial-gradient(circle at 32% 32%, #c084fc 0%, #8b5cf6 45%, #4c1d95 100%);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 50px rgba(139, 92, 246, 0.8), 0 0 80px rgba(124, 58, 237, 0.4), inset 0 0 20px rgba(255, 255, 255, 0.5);
+  animation: purpleVoiceGlow 1.2s ease-in-out infinite alternate;
+}
+
+/* ── Thinking / Processing State with Shimmer Spin ── */
+.orb-thinking {
+  background: radial-gradient(circle at 35% 35%, #4f46e5, #1e1b4b);
+  border: 1.5px solid rgba(167, 139, 250, 0.6);
+  box-shadow: 0 0 35px rgba(99, 102, 241, 0.55), inset 0 0 15px rgba(255, 255, 255, 0.3);
+  animation: thinkingPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes purpleVoiceGlow {
+  0% {
+    box-shadow: 0 0 35px rgba(139, 92, 246, 0.6), inset 0 0 15px rgba(255, 255, 255, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 60px rgba(168, 85, 247, 0.9), 0 0 90px rgba(139, 92, 246, 0.5), inset 0 0 25px rgba(255, 255, 255, 0.6);
+  }
+}
+
+@keyframes thinkingPulse {
+  0%, 100% {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.4);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(129, 140, 248, 0.7);
+    transform: scale(1.04);
+  }
+}
+
+/* ── Live Audio Waveform Bars ── */
+.waveform-equalizer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.5px;
+  height: 40px;
+  padding: 0 8px;
+}
+
+.waveform-bar {
+  width: 3.5px;
+  min-height: 4px;
+  border-radius: 9999px;
+  background: #3b82f6;
+  transition: height 0.06s cubic-bezier(0.2, 0, 0.38, 0.9), background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.waveform-bar.bar-purple {
+  background: linear-gradient(180deg, #d8b4fe 0%, #8b5cf6 100%);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+}
+
+.waveform-bar.bar-blue {
+  background: linear-gradient(180deg, #93c5fd 0%, #3b82f6 100%);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+}
+
+.waveform-bar.bar-idle {
+  background: rgba(112, 112, 125, 0.3);
+  height: 4px !important;
+}
+
+@keyframes mercuryPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(82, 102, 235, 0.5), 0 0 25px rgba(82, 102, 235, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 20px rgba(82, 102, 235, 0), 0 0 35px rgba(82, 102, 235, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(82, 102, 235, 0), 0 0 25px rgba(82, 102, 235, 0.35);
+  }
+}
+
+@keyframes mercuryPulseHigh {
+  0% {
+    box-shadow: 0 0 0 0 rgba(82, 102, 235, 0.7), 0 0 35px rgba(255, 255, 255, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 28px rgba(82, 102, 235, 0), 0 0 45px rgba(82, 102, 235, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(82, 102, 235, 0), 0 0 35px rgba(255, 255, 255, 0.4);
+  }
+}
+
+/* ── Custom Scrollbar in Mercury Graphite ── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(112, 112, 125, 0.3);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(112, 112, 125, 0.6);
+}
+
+/* ── VAD Latency Monitor (Mercury Graphite Card Styling) ── */
+.vad-monitor-card {
+  width: 100%;
+  max-width: 720px;
+  margin: 12px auto 16px auto;
+  background-color: var(--color-graphite-card);
+  border: 1px solid rgba(226, 227, 237, 0.1);
+  border-radius: var(--radius-cards);
+  padding: 16px 20px;
+  transition: all 0.25s ease;
+}
+.vad-monitor-card.active-test-mode {
+  border-color: rgba(82, 102, 235, 0.5);
+  box-shadow: 0 0 24px rgba(82, 102, 235, 0.15);
+}
+
+.vad-monitor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.vad-monitor-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 480;
+  letter-spacing: 0.01em;
+  color: var(--color-ivory-text);
+}
+.vad-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-cobalt);
+  box-shadow: 0 0 8px var(--color-cobalt);
+  transition: all 0.2s ease;
+}
+.vad-pulse-dot[data-speaking="true"] {
+  background: #ffffff;
+  box-shadow: 0 0 14px var(--color-cobalt), 0 0 4px #ffffff;
+  transform: scale(1.25);
+}
+
+.vad-engine-badge {
+  font-size: 11px;
+  color: var(--color-ash-text);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: var(--radius-pills);
+  margin-left: 4px;
+}
+
+.vad-toggle-btn {
+  background: var(--color-obsidian-button);
+  border: 1px solid rgba(226, 227, 237, 0.12);
+  color: var(--color-ash-text);
+  font-size: 11.5px;
+  font-weight: 480;
+  padding: 4px 12px;
+  border-radius: var(--radius-buttons);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.vad-toggle-btn:hover {
+  background: rgba(82, 102, 235, 0.15);
+  color: var(--color-ivory-text);
+  border-color: var(--color-cobalt);
+}
+.vad-toggle-btn.btn-active {
+  background: var(--color-cobalt);
+  border-color: var(--color-cobalt);
+  color: var(--color-pure-white);
+}
+
+.vad-activity-indicator {
+  margin-bottom: 12px;
+}
+.vad-activity-state {
+  font-size: 13.5px;
+  margin-bottom: 8px;
+}
+.vad-state-idle {
+  color: var(--color-ash-text);
+}
+.vad-state-ready {
+  color: var(--color-ivory-text);
+}
+.vad-state-speaking {
+  color: var(--color-pure-white);
+  font-weight: 480;
+}
+.vad-state-ended {
+  color: #93a2ff;
+  font-weight: 480;
+}
+
+.vad-volume-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.vad-volume-fill {
+  height: 100%;
+  background: var(--color-cobalt);
+  border-radius: 2px;
+  transition: width 0.05s linear;
+}
+
+.vad-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.vad-stat-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.vad-stat-label {
+  font-size: 10px;
+  color: var(--color-ash-text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.vad-stat-value {
+  font-size: 13px;
+  font-weight: 480;
+  color: var(--color-ivory-text);
+  font-family: monospace;
+}
+
+.vad-audio-preview-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.vad-playback-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-obsidian-button);
+  border: 1px solid rgba(226, 227, 237, 0.15);
+  color: var(--color-ivory-text);
+  font-size: 11.5px;
+  font-weight: 480;
+  padding: 5px 14px;
+  border-radius: var(--radius-buttons);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.vad-playback-btn:hover {
+  background: rgba(82, 102, 235, 0.2);
+  border-color: var(--color-cobalt);
+}
+.vad-preview-hint {
+  font-size: 11px;
+  color: var(--color-ash-text);
+}
