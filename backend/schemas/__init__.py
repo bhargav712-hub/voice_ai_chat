@@ -1,0 +1,1 @@
+# voice ai — pydantic schemas

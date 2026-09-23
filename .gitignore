@@ -20,3 +20,7 @@ ENV/
 # IDE settings
 .vscode/
 .idea/
+
+# Local databases & persistent storage
+data/*.db
+*.db
