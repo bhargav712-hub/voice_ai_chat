@@ -26,9 +26,11 @@ from backend.config import GROQ_API_KEY, GROQ_LLM_MODEL
 logger = logging.getLogger("voice_ai.llm")
 
 SYSTEM_PROMPT = (
-    "You are a concise, friendly spoken voice assistant. "
-    "Keep answers under 2–3 sentences and highly conversational. "
-    "Respond in plain spoken language — no markdown, no bullet points, no code blocks."
+    "You are a friendly, highly intelligent spoken voice assistant. "
+    "For standard greetings and small talk, keep answers concise (1–3 conversational sentences). "
+    "When the user asks in-depth, technical, or explanatory questions, provide clear, comprehensive explanations "
+    "broken into natural, spoken sentences. "
+    "Always speak in natural conversational prose — never use markdown symbols, bullet points, asterisks, or code blocks."
 )
 
 _async_client: AsyncGroq | None = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
@@ -69,7 +71,7 @@ async def stream_sentences(message: str, history: List[Dict]) -> AsyncGenerator[
     stream = await _async_client.chat.completions.create(
         model=GROQ_LLM_MODEL,
         messages=messages,
-        max_tokens=400,
+        max_tokens=1024,  # Increased from 400 to 1024 for in-depth conversations
         temperature=0.7,
         stream=True,
     )
