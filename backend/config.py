@@ -10,7 +10,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # ── Groq ──────────────────────────────────────────────────────────────────────
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-GROQ_LLM_MODEL: str = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
+GROQ_LLM_MODEL: str = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.8-27b")
 
 # ── Edge TTS ──────────────────────────────────────────────────────────────────
 TTS_VOICE: str = os.getenv("TTS_VOICE", "en-US-GuyNeural")

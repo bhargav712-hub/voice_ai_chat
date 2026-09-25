@@ -22,7 +22,13 @@ logger = logging.getLogger("voice_ai.tts")
 
 async def synthesize(text: str, voice: str | None = None) -> bytes:
     """Synthesize text → MP3 bytes using Edge TTS (in-memory stream for minimum latency)."""
-    chosen_voice = voice or TTS_VOICE
+    if not text or not text.strip():
+        return b""
+
+    # Detect Devanagari (Hindi) characters: U+0900 to U+097F
+    is_hindi = any('\u0900' <= char <= '\u097F' for char in text)
+    chosen_voice = "hi-IN-SwaraNeural" if is_hindi else (voice or TTS_VOICE)
+
     communicate = edge_tts.Communicate(text, voice=chosen_voice)
     chunks: list[bytes] = []
 
@@ -32,14 +38,17 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
                 chunks.append(chunk["data"])
         return b"".join(chunks)
     except Exception as exc:
-        logger.warning("[TTS] In-memory stream failed (%s), falling back to temp file", exc)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
+        logger.warning("[TTS] In-memory stream failed (%s), attempting fresh fallback", exc)
         try:
-            await communicate.save(tmp_path)
-            with open(tmp_path, "rb") as f:
-                return f.read()
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            # Create a FRESH instance (Communicate cannot be reused)
+            fallback_voice = "hi-IN-SwaraNeural" if is_hindi else TTS_VOICE
+            fresh_comm = edge_tts.Communicate(text, voice=fallback_voice)
+            fallback_chunks: list[bytes] = []
+            async for chunk in fresh_comm.stream():
+                if chunk["type"] == "audio":
+                    fallback_chunks.append(chunk["data"])
+            return b"".join(fallback_chunks)
+        except Exception as fallback_err:
+            logger.error("[TTS] Fallback synthesis failed: %s", fallback_err)
+            return b""
 

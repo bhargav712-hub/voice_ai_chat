@@ -69,7 +69,7 @@ async def stream_sentences(message: str, history: List[Dict]) -> AsyncGenerator[
     stream = await _async_client.chat.completions.create(
         model=GROQ_LLM_MODEL,
         messages=messages,
-        max_tokens=150,
+        max_tokens=400,
         temperature=0.7,
         stream=True,
     )
