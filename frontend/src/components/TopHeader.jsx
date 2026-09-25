@@ -13,14 +13,16 @@ export default function TopHeader({
   return (
     <header className="h-14 px-5 flex items-center justify-between border-b border-[#70707d]/20 bg-[#171721]/90 backdrop-blur-md z-20 shrink-0">
       <div className="flex items-center space-x-3">
-        <button
-          onClick={onToggleSidebar}
-          className="p-2 rounded-lg bg-[#1e1e2a] border border-[#70707d]/25 text-[#c3c3cc] hover:text-[#ededf3] hover:bg-[#272735] transition flex items-center justify-center"
-          aria-label={isSidebarOpen ? 'Collapse sidebar' : 'Open sidebar'}
-          title={isSidebarOpen ? 'Collapse sidebar' : 'Open sidebar'}
-        >
-          <Menu className="w-4 h-4" />
-        </button>
+        {!isSidebarOpen && (
+          <button
+            onClick={onToggleSidebar}
+            className="p-2 rounded-lg bg-[#1e1e2a] border border-[#70707d]/25 text-[#c3c3cc] hover:text-[#ededf3] hover:bg-[#272735] transition flex items-center justify-center"
+            aria-label="Open sidebar"
+            title="Open sidebar"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+        )}
 
         <span className="font-[480] text-sm tracking-wide text-[#ededf3] truncate max-w-[200px] md:max-w-md">
           {sessionTitle}

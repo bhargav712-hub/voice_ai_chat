@@ -1,5 +1,5 @@
 import React from 'react';
-import { Volume2, X, Plus, History, Trash2, Radio, VolumeX } from 'lucide-react';
+import { Volume2, PanelLeftClose, Plus, History, Trash2, Radio, VolumeX } from 'lucide-react';
 import { formatRelativeDate } from '../utils/formatters';
 
 export default function SessionsSidebar({
@@ -20,7 +20,7 @@ export default function SessionsSidebar({
         isOpen ? 'w-56 md:w-64 translate-x-0' : 'w-0 -translate-x-full'
       } transition-all duration-300 ease-in-out bg-[#1e1e2a] border-r border-[#70707d]/20 flex flex-col absolute md:relative z-30 h-full shrink-0 overflow-hidden`}
     >
-      {/* Sidebar Header with Brand Mark */}
+      {/* Sidebar Header with Brand Mark & Close Sidenav Button */}
       <div className="flex items-center justify-between p-4 border-b border-[#70707d]/20 min-w-[14rem] md:min-w-[16rem]">
         <div className="flex items-center space-x-3">
           <div className="w-8 h-8 rounded-full bg-[#5266eb] flex items-center justify-center shadow-none shrink-0">
@@ -36,11 +36,11 @@ export default function SessionsSidebar({
 
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg text-[#c3c3cc] hover:text-[#ededf3] bg-[#272735]/60 hover:bg-[#272735] border border-[#70707d]/20 transition flex items-center justify-center"
+          className="p-1.5 rounded-lg text-[#c3c3cc] hover:text-[#ededf3] bg-[#272735]/60 hover:bg-[#272735] border border-[#70707d]/20 transition flex items-center justify-center group"
           aria-label="Close sidebar"
-          title="Collapse sidebar"
+          title="Close sidebar"
         >
-          <X className="w-4 h-4" />
+          <PanelLeftClose className="w-4 h-4 transition-transform group-hover:-translate-x-0.5 text-[#c3c3cc] group-hover:text-[#ededf3]" />
         </button>
       </div>
 
