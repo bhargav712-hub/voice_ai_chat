@@ -24,3 +24,7 @@ ENV/
 # Local databases & persistent storage
 data/*.db
 *.db
+
+# Practice Sandbox & Local Labs
+practice_sandbox/
+practice_sandbox_backup/
