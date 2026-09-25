@@ -14,6 +14,3 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
 
 
-
-class ChatResponse(BaseModel):
-    reply: str

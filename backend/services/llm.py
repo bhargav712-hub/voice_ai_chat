@@ -19,7 +19,7 @@ import logging
 import re
 from typing import List, Dict, AsyncGenerator
 
-from groq import AsyncGroq, Groq
+from groq import AsyncGroq
 
 from backend.config import GROQ_API_KEY, GROQ_LLM_MODEL
 
@@ -31,31 +31,7 @@ SYSTEM_PROMPT = (
     "Respond in plain spoken language — no markdown, no bullet points, no code blocks."
 )
 
-_sync_client: Groq | None = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 _async_client: AsyncGroq | None = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-
-
-def _generate_sync(message: str, history: List[Dict]) -> str:
-    """Blocking LLM call — executed in a thread pool for the legacy non-streaming route."""
-    if not _sync_client:
-        raise ValueError("GROQ_API_KEY is not configured. Set it in the .env file.")
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(history)                                   # prior turns
-    messages.append({"role": "user", "content": message})     # current turn
-
-    response = _sync_client.chat.completions.create(
-        model=GROQ_LLM_MODEL,
-        messages=messages,
-        max_tokens=150,
-        temperature=0.7,
-    )
-    return response.choices[0].message.content.strip()
-
-
-async def generate_reply(message: str, history: List[Dict]) -> str:
-    """Async wrapper — runs the blocking Groq call in a thread pool."""
-    return await asyncio.to_thread(_generate_sync, message, history)
 
 
 def extract_sentences(buffer: str) -> tuple[list[str], str]:
