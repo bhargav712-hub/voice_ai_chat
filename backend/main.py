@@ -19,13 +19,14 @@ Timing logs are printed at each stage so you can measure latency:
 
 Future: WebSocket /ws/conversation for streaming.
 """
+import asyncio
 import base64
 import json
 import logging
 import time
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
@@ -93,34 +94,6 @@ async def transcribe(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Transcription failed: {exc}")
 
 
-@app.post("/api/chat")
-async def chat(req: ChatRequest):
-    """
-    Receive user message + conversation history, return LLM reply.
-    History format: [{"role": "user"|"assistant", "content": "..."}]
-    """
-    t0 = time.monotonic()
-    logger.info("[LLM] Started  —  message=%r", req.message[:80])
-
-    try:
-        history = [{"role": m.role, "content": m.content} for m in req.history]
-        reply = await llm.generate_reply(req.message, history)
-        elapsed = time.monotonic() - t0
-        logger.info("[LLM] Completed: %.2fs  —  %r", elapsed, reply[:80])
-
-        # Persist conversation if conversation_id provided
-        if req.conversation_id:
-            try:
-                storage.add_message(req.conversation_id, "user", req.message)
-                storage.add_message(req.conversation_id, "assistant", reply)
-            except Exception as store_err:
-                logger.warning("[STORAGE] Failed to auto-save chat message: %s", store_err)
-
-        return {"reply": reply}
-
-    except Exception as exc:
-        logger.error("[LLM] Failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"LLM generation failed: {exc}")
 
 
 @app.post("/api/chat-stream")
@@ -242,8 +215,6 @@ async def delete_conversation_endpoint(conv_id: str):
     return {"success": success}
 
 
-
-
 @app.post("/api/tts")
 async def text_to_speech(req: TTSRequest):
     """
@@ -262,6 +233,181 @@ async def text_to_speech(req: TTSRequest):
     except Exception as exc:
         logger.error("[TTS] Failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {exc}")
+
+# ── Full-Duplex WebSocket Streaming Route ─────────────────────────────────────
+
+@app.websocket("/ws/conversation")
+async def websocket_conversation(websocket: WebSocket):
+    """
+    Bidirectional streaming WebSocket endpoint.
+    Maintains a persistent socket for speech audio upload, instant transcription,
+    sentence-level streaming TTS synthesis, and sub-millisecond barge-in interruption.
+    """
+    await websocket.accept()
+    logger.info("[WS] Client connected to /ws/conversation")
+
+    conversation_id: str | None = None
+    history: list[dict] = []
+    active_generation_task: asyncio.Task | None = None
+
+    async def cancel_active_task():
+        nonlocal active_generation_task
+        if active_generation_task and not active_generation_task.done():
+            logger.info("[WS] Cancelling active generation task (barge-in)")
+            active_generation_task.cancel()
+            try:
+                await active_generation_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as task_err:
+                logger.debug("[WS] Task cancelled with error: %s", task_err)
+            active_generation_task = None
+
+    async def run_pipeline(user_audio_bytes: bytes):
+        nonlocal active_generation_task
+        t0 = time.monotonic()
+        try:
+            # 1. Groq Whisper STT (<200ms)
+            t_stt_start = time.monotonic()
+            transcript = await stt.transcribe_audio(user_audio_bytes, "audio.wav")
+            elapsed_stt = time.monotonic() - t_stt_start
+            logger.info("[WS STT] Completed in %.2fs: %r", elapsed_stt, transcript[:80])
+
+            if not transcript or not transcript.strip():
+                await websocket.send_json({"type": "transcript", "role": "user", "text": ""})
+                await websocket.send_json({
+                    "type": "done",
+                    "count": 0,
+                    "elapsed": round(time.monotonic() - t0, 2)
+                })
+                return
+
+            # Emit transcript immediately to client so UI bubble renders
+            await websocket.send_json({
+                "type": "transcript",
+                "role": "user",
+                "text": transcript
+            })
+
+            # Auto-save user message to DB
+            if conversation_id:
+                try:
+                    storage.add_message(conversation_id, "user", transcript)
+                except Exception as e:
+                    logger.warning("[WS STORAGE] Failed to auto-save user query: %s", e)
+
+            # Update session history
+            history.append({"role": "user", "content": transcript})
+
+            # 2. Pipelined Sentence-level LLM + Edge-TTS Streaming
+            sentence_count = 0
+            full_assistant_reply: list[str] = []
+
+            async for sentence in llm.stream_sentences(transcript, history[:-1]):
+                sentence_count += 1
+                full_assistant_reply.append(sentence)
+
+                t_tts_start = time.monotonic()
+                audio_bytes = await tts.synthesize(sentence)
+                t_tts = time.monotonic() - t_tts_start
+                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+                await websocket.send_json({
+                    "type": "sentence",
+                    "index": sentence_count - 1,
+                    "text": sentence,
+                    "audio": audio_b64,
+                })
+                logger.info(
+                    "[WS STREAM] Sent sentence %d (tts=%.2fs): %r",
+                    sentence_count, t_tts, sentence[:60]
+                )
+
+            # Persist assistant reply
+            full_reply_text = " ".join(full_assistant_reply)
+            if full_reply_text:
+                history.append({"role": "assistant", "content": full_reply_text})
+                if conversation_id:
+                    try:
+                        storage.add_message(conversation_id, "assistant", full_reply_text)
+                    except Exception as e:
+                        logger.warning("[WS STORAGE] Failed to auto-save assistant reply: %s", e)
+
+            elapsed = time.monotonic() - t0
+            await websocket.send_json({
+                "type": "done",
+                "count": sentence_count,
+                "elapsed": round(elapsed, 2)
+            })
+            logger.info("[WS STREAM] Finished in %.2fs (%d sentences)", elapsed, sentence_count)
+
+        except asyncio.CancelledError:
+            logger.info("[WS] Generation task cancelled successfully.")
+            raise
+        except Exception as exc:
+            logger.error("[WS] Pipeline error: %s", exc)
+            try:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
+
+    try:
+        while True:
+            raw_msg = await websocket.receive()
+            if raw_msg.get("type") == "websocket.disconnect":
+                break
+
+            if "text" in raw_msg:
+                try:
+                    data = json.loads(raw_msg["text"])
+                except Exception as parse_err:
+                    logger.warning("[WS] Failed to parse JSON message: %s", parse_err)
+                    continue
+
+                msg_type = data.get("type")
+
+                if msg_type == "init":
+                    conversation_id = data.get("conversation_id")
+                    client_history = data.get("history")
+                    if isinstance(client_history, list):
+                        history = [{"role": m.get("role"), "content": m.get("content")} for m in client_history]
+                    logger.info("[WS] Initialized session: %s (history items: %d)", conversation_id, len(history))
+
+                elif msg_type == "audio_input":
+                    audio_b64 = data.get("audio")
+                    if not audio_b64:
+                        continue
+                    try:
+                        audio_bytes = base64.b64decode(audio_b64)
+                    except Exception as decode_err:
+                        logger.error("[WS] Base64 decode failed: %s", decode_err)
+                        continue
+
+                    # Cancel any prior active generation task before starting a new one
+                    await cancel_active_task()
+                    active_generation_task = asyncio.create_task(run_pipeline(audio_bytes))
+
+                elif msg_type == "interrupt":
+                    logger.info("[WS] Received interrupt request from client")
+                    await cancel_active_task()
+                    await websocket.send_json({"type": "interrupted"})
+
+                elif msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+            elif "bytes" in raw_msg:
+                audio_bytes = raw_msg["bytes"]
+                if audio_bytes:
+                    await cancel_active_task()
+                    active_generation_task = asyncio.create_task(run_pipeline(audio_bytes))
+
+    except WebSocketDisconnect:
+        logger.info("[WS] Client disconnected gracefully.")
+    except Exception as exc:
+        logger.error("[WS] Unexpected connection error: %s", exc)
+    finally:
+        await cancel_active_task()
+        logger.info("[WS] Connection closed and cleaned up.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

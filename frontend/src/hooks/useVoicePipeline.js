@@ -1,9 +1,10 @@
 /**
- * useVoicePipeline — ChatGPT Advanced Voice conversational orchestration.
+ * useVoicePipeline — Full-duplex WebSocket conversational orchestration.
  *
  * Implements:
  * - Neural Silero VAD v5 with automatic pause tolerance
- * - Instant Barge-In interruption (cuts audio playback and active LLM stream)
+ * - Persistent WebSocket connection to /ws/conversation
+ * - Instant Barge-In interruption via WebSocket interrupt frame
  * - Pipelined Sentence-Level Streaming (Time-To-First-Audio < 800ms)
  * - Hands-free continuous turn-taking
  * - Microphone Mute / Unmute toggle (strike-through mic control)
@@ -38,16 +39,24 @@ export function useVoicePipeline({ voice } = {}) {
   const stateRef             = useRef('idle');
   const isMutedRef           = useRef(false);
   const historyRef           = useRef([]);
-  const streamRef            = useRef(null);
+  const streamRef            = useRef(null);      // MediaStream (mic)
   const autoListenTimerRef   = useRef(null);
-  const abortControllerRef   = useRef(null);
+  const abortControllerRef   = useRef(null);      // kept for legacy HTTP fallback compatibility
   const activeSessionIdRef   = useRef(activeSessionId);
   const speechStartTimeRef   = useRef(0);
+  const wsRef                = useRef(null);       // WebSocket connection handle
 
   // Sync ref
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
     localStorage.setItem('voice_ai_session_id', activeSessionId);
+    // Update the WebSocket session context if socket is already open
+    if (wsRef.current?.isConnected) {
+      wsRef.current.updateSession(
+        activeSessionId,
+        historyRef.current.map(m => ({ role: m.role, content: m.content }))
+      );
+    }
   }, [activeSessionId]);
 
   function go(s) {
@@ -103,7 +112,82 @@ export function useVoicePipeline({ voice } = {}) {
     },
   });
 
-  // ── Process Spoken Audio ───────────────────────────────────────────────────
+  // ── WebSocket Connection Manager ──────────────────────────────────────────
+  const connectWebSocket = useCallback(() => {
+    // Close any existing connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    const socket = api.createVoiceSocket({
+      conversationId: activeSessionIdRef.current,
+      history: historyRef.current.map(m => ({ role: m.role, content: m.content })),
+
+      onTranscript: (data) => {
+        if (!data.text?.trim()) return;
+        // User transcript arrived from Groq Whisper (<200ms)
+        const userMsg = { role: 'user', content: data.text };
+        addMsg(userMsg);
+        historyRef.current.push(userMsg);
+        // Add placeholder for assistant response
+        setTranscript(prev => [...prev, { role: 'assistant', content: '' }]);
+      },
+
+      onSentence: ({ text: sentenceText, audioBlob: sentenceAudio }) => {
+        updateLastAssistantMsg(sentenceText);
+        if (sentenceAudio) {
+          go('speaking');
+          audioPlayback.enqueue(sentenceAudio);
+        }
+      },
+
+      onDone: (data) => {
+        audioPlayback.setStreamFinished();
+        // Reconstruct full assistant text from transcript state
+        setTranscript(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.content) {
+            historyRef.current.push({ role: 'assistant', content: last.content });
+          }
+          return prev;
+        });
+      },
+
+      onInterrupted: () => {
+        console.log('[WS] Server confirmed interrupt');
+      },
+
+      onError: (err) => {
+        console.error('[WS] Error:', err);
+        setError(err.message || 'WebSocket error');
+        // Don't go to error state for transient WS errors during active voice mode
+      },
+
+      onOpen: () => {
+        console.log('[WS] Socket opened and initialized');
+      },
+
+      onClose: (event) => {
+        console.log('[WS] Socket closed unexpectedly, code:', event?.code);
+        // Auto-reconnect if still in voice mode
+        if (isVoiceModeRef.current && !isMutedRef.current) {
+          console.log('[WS] Attempting reconnect in 1s...');
+          setTimeout(() => {
+            if (isVoiceModeRef.current) {
+              connectWebSocket();
+            }
+          }, 1000);
+        }
+      },
+    });
+
+    wsRef.current = socket;
+    return socket;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioPlayback]);
+
+  // ── Process Spoken Audio (WebSocket-based) ────────────────────────────────
   const processAudio = useCallback(async (audioBlob) => {
     if (isMutedRef.current || !audioBlob || audioBlob.size === 0) {
       if (isVoiceModeRef.current && !isMutedRef.current) {
@@ -116,6 +200,21 @@ export function useVoicePipeline({ voice } = {}) {
 
     go('processing');
     setVolume(0);
+
+    // Send audio over WebSocket if connected
+    if (wsRef.current?.isConnected) {
+      try {
+        wsRef.current.sendAudio(audioBlob);
+      } catch (err) {
+        console.error('[WS] Failed to send audio:', err);
+        setError('Failed to send audio. Reconnecting...');
+        go('error');
+      }
+      return;
+    }
+
+    // ── Fallback: HTTP-based pipeline (if WebSocket is not connected) ──────
+    console.warn('[PIPELINE] WebSocket not connected, falling back to HTTP');
 
     // Cancel any previous stream
     if (abortControllerRef.current) {
@@ -193,7 +292,7 @@ export function useVoicePipeline({ voice } = {}) {
       go('error');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioPlayback, voice]);
+  }, [audioPlayback, voice, connectWebSocket]);
 
   // ── Silero VAD Setup ────────────────────────────────────────────────────────
   const vad = useVAD({
@@ -211,6 +310,12 @@ export function useVoicePipeline({ voice } = {}) {
           return;
         }
         console.log('[PIPELINE] Barge-in triggered by user speech!');
+
+        // Send interrupt via WebSocket (instant cancellation)
+        if (wsRef.current?.isConnected) {
+          wsRef.current.interrupt();
+        }
+        // Also abort any HTTP fallback streams
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           abortControllerRef.current = null;
@@ -236,6 +341,9 @@ export function useVoicePipeline({ voice } = {}) {
 
       // Safety fallback: if state was speaking or processing when user finished interrupting
       if (stateRef.current === 'speaking' || stateRef.current === 'processing') {
+        if (wsRef.current?.isConnected) {
+          wsRef.current.interrupt();
+        }
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
           abortControllerRef.current = null;
@@ -331,14 +439,24 @@ export function useVoicePipeline({ voice } = {}) {
     isVoiceModeRef.current = true;
     isMutedRef.current = false;
     setIsMuted(false);
+
+    // Open persistent WebSocket connection
+    connectWebSocket();
+
     startListeningInternal();
-  }, [startListeningInternal]);
+  }, [startListeningInternal, connectWebSocket]);
 
   // ── Exit Voice Mode ────────────────────────────────────────────────────────
   const exitVoiceMode = useCallback(() => {
     setIsVoiceMode(false);
     isVoiceModeRef.current = false;
     clearTimeout(autoListenTimerRef.current);
+
+    // Close WebSocket connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -357,6 +475,10 @@ export function useVoicePipeline({ voice } = {}) {
 
   // ── Manual Interrupt / Barge-In Click ─────────────────────────────────────
   const interrupt = useCallback(() => {
+    // Send interrupt via WebSocket
+    if (wsRef.current?.isConnected) {
+      wsRef.current.interrupt();
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -408,6 +530,11 @@ export function useVoicePipeline({ voice } = {}) {
       clearTimeout(timer);
       if (abortCtrl) {
         abortCtrl.abort();
+      }
+      // Close WebSocket on unmount
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
       vad.stop();
       if (stream) {

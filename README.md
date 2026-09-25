@@ -62,6 +62,124 @@ sequenceDiagram
 
 ---
 
+## ⚛️ React SPA: State Management & API Data Fetching
+
+This section details how the React Single-Page Application (SPA) manages conversational state variables and communicates with the FastAPI backend.
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   React SPA Client                                     │
+│                                                                                        │
+│  ┌──────────────────────┐      ┌────────────────────────┐      ┌────────────────────┐  │
+│  │   useVoicePipeline   │ ───> │        App.jsx         │ ───> │  UI Components     │  │
+│  │   (Pipeline Hook)    │      │ (Sessions & App State) │      │ (Orb, VAD, Drawer) │  │
+│  └──────────┬───────────┘      └───────────┬────────────┘      └────────────────────┘  │
+│             │                              │                                           │
+│             ▼                              ▼                                           │
+│  ┌──────────────────────────────────────────────────────┐                              │
+│  │               services/api.js (Transport)            │                              │
+│  │   • Fetch REST Client   • SSE Parser   • WebSocket   │                              │
+│  └──────────────────────────┬───────────────────────────┘                              │
+└─────────────────────────────┼──────────────────────────────────────────────────────────┘
+                              │ Vite Reverse Proxy (/api, /ws)
+                              ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                FastAPI Backend (:8000)                                 │
+│   • /api/transcribe (STT)      • /api/chat-stream (LLM+TTS)     • /ws/conversation     │
+│   • /api/conversations (DB)    • /api/health                    • /api/tts             │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. State Variables Breakdown
+
+The application separates state into **Session & UI Shell State** (in `App.jsx`) and **Conversational Pipeline State** (in `useVoicePipeline.js`):
+
+| State Variable | Source File | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `sessions` | `App.jsx` | `Array<Session>` | List of saved sessions loaded from the SQLite backend database (`id`, `title`, `updated_at`). |
+| `activeSessionId` | `useVoicePipeline.js` | `string \| null` | UUID of the currently active voice session. Automatically synchronized with SQLite. |
+| `isSidebarOpen` | `App.jsx` | `boolean` | Controls visibility of the session history drawer. |
+| `state` | `useVoicePipeline.js` | `string` | Finite State Machine (FSM) state: `'idle'`, `'listening'`, `'processing'`, or `'speaking'`. Drives Voice Orb animations. |
+| `isVoiceMode` | `useVoicePipeline.js` | `boolean` | `true` when live conversational microphone listening is active. |
+| `isMuted` | `useVoicePipeline.js` | `boolean` | Microphone mute toggle (`mic-off`). Prevents audio transmission while keeping the session open. |
+| `volume` | `useVoicePipeline.js` | `number` (0.0–1.0) | Normalized real-time audio volume derived from microphone analyser node for reactive orb pulsing. |
+| `transcript` | `useVoicePipeline.js` | `Array<Message>` | Conversation messages array: `[{ id, role: 'user'\|'assistant', content, timestamp }]`. |
+| `vadMetrics` | `useVoicePipeline.js` | `Object` | Live VAD telemetry: `{ rms, speechProbability, isSpeech }` computed in-browser. |
+| `error` | `useVoicePipeline.js` | `string \| null` | Error messages from network failures, microphone denials, or backend exceptions. |
+
+### 2. How APIs Are Fetched Into the React SPA
+
+All network requests are centralized inside [`frontend/src/services/api.js`](frontend/src/services/api.js) and consumed cleanly by React hooks and components.
+
+#### A. Initial Load & Session Fetching (`useEffect` + `useCallback`)
+On component mount, `App.jsx` fetches the conversation history using standard native `fetch`:
+```javascript
+// App.jsx
+const refreshSessions = useCallback(async () => {
+  try {
+    const list = await api.getConversations(); // GET /api/conversations
+    setSessions(list);
+  } catch (err) {
+    console.warn('[STORAGE] Could not fetch sessions:', err);
+  }
+}, []);
+
+useEffect(() => {
+  refreshSessions();
+}, [refreshSessions, activeSessionId, transcript.length]);
+```
+
+#### B. Speech-to-Text Transcription (`POST /api/transcribe`)
+When Silero VAD detects the end of user speech (`onSpeechEnd`):
+1. The 16kHz PCM audio buffer is packaged into a `Blob` and wrapped in `FormData`.
+2. `api.transcribe(audioBlob, abortSignal)` calls `POST /api/transcribe`.
+3. The response `{ text }` updates the local `transcript` state:
+```javascript
+// services/api.js
+export async function transcribe(audioBlob, signal) {
+  const form = new FormData();
+  form.append('audio', audioBlob, 'audio.wav');
+  const res = await fetch('/api/transcribe', { method: 'POST', body: form, signal });
+  return res.json(); // { text: "..." }
+}
+```
+
+#### C. Streaming LLM & Audio Synthesis (`POST /api/chat-stream` & SSE)
+For low-latency responses, the frontend initiates a Server-Sent Events (SSE) stream using `fetch` with a `ReadableStreamDefaultReader`:
+1. Dispatches `POST /api/chat-stream` with conversation context.
+2. Reads incoming chunks line-by-line using `TextDecoder`.
+3. Dispatches `onSentence(sentenceText, audioBlob)` as soon as each sentence completes synthesis on the backend:
+```javascript
+// services/api.js
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+// Parses 'event: sentence' -> decodes base64 MP3 -> enqueues audio for immediate playback
+```
+
+#### D. Full-Duplex WebSocket Mode (`/ws/conversation`)
+For sub-millisecond turn-around, `useVoicePipeline.js` opens a persistent bidirectional WebSocket:
+```javascript
+// services/api.js
+const socket = new WebSocket('ws://localhost:5173/ws/conversation');
+socket.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'transcript') updateTranscript(msg.text);
+  if (msg.type === 'sentence')   playAudioChunk(base64ToBlob(msg.audio));
+  if (msg.type === 'done')       setStatus('idle');
+};
+```
+
+#### E. Conversational Barge-In Interruption
+When the user speaks while the assistant is talking:
+1. `useVAD.js` detects speech onset (`onSpeechStart`).
+2. `interrupt()` is called immediately:
+   - Pauses and clears the `HTMLAudioElement` queue.
+   - Triggers `AbortController.abort()` to cancel in-flight HTTP fetch requests, or sends `{"type": "interrupt"}` over the WebSocket.
+   - Backend cancels the in-flight Groq LLM / TTS task using `asyncio.Task.cancel()`.
+   - Pipeline transitions state instantly back to `listening`.
+
+---
+
 ## 📊 STS Stage Comparison
 
 | Stage | Technology | Speed / Footprint | Key Advantage |
