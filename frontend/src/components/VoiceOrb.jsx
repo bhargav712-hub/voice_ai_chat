@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mic, Square, Sparkles, Volume2, HelpCircle } from 'lucide-react';
+import { Mic, Square, Sparkles, Volume2 } from 'lucide-react';
 
 const BAR_COUNT = 18;
 // Baseline wave profile weights to create a natural frequency curve
@@ -13,7 +13,6 @@ export default function VoiceOrb({
   vadMetrics = null,
   onOrbClick,
 }) {
-  const [showVADInfo, setShowVADInfo] = useState(false);
   const [tick, setTick] = useState(0);
 
   // Micro animation loop for lively waveform movements when speaking
@@ -218,27 +217,6 @@ export default function VoiceOrb({
           {getSubLabel()}
         </span>
 
-        {/* Explanatory Caption (Image 1 reference: "how does she know when you are done talking?") */}
-        {isVoiceMode && (
-          <div className="pt-1.5 flex flex-col items-center">
-            <button
-              onClick={() => setShowVADInfo(!showVADInfo)}
-              className="group flex items-center space-x-1.5 text-[11px] text-[#c3c3cc]/70 hover:text-[#ededf3] transition-colors cursor-pointer"
-            >
-              <span>how does she know when you are done talking?</span>
-              <HelpCircle className="w-3 h-3 text-[#5266eb] group-hover:scale-110 transition-transform" />
-            </button>
-
-            {/* Informational Tooltip / Card */}
-            {showVADInfo && (
-              <div className="mt-2 p-2.5 max-w-xs text-[11px] leading-relaxed rounded-xl bg-[#1e1e2a]/95 border border-[#5266eb]/30 text-[#c3c3cc] shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-200">
-                <p>
-                  <strong className="text-[#ededf3]">Silero Neural VAD:</strong> The browser analyzes human vocal formants in real-time. When you pause for &gt;300ms, it automatically signals speech completion and triggers the AI reply.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
     </div>
