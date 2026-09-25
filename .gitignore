@@ -28,3 +28,7 @@ data/*.db
 # Practice Sandbox & Local Labs
 practice_sandbox/
 practice_sandbox_backup/
+
+# Diagrams
+*.d2
+*.svg
