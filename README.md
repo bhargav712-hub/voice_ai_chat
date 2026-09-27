@@ -173,8 +173,8 @@ socket.onmessage = (event) => {
 When the user speaks while the assistant is talking:
 1. `useVAD.js` detects speech onset (`onSpeechStart`).
 2. `interrupt()` is called immediately:
-   - Pauses and clears the `HTMLAudioElement` queue.
-   - Triggers `AbortController.abort()` to cancel in-flight HTTP fetch requests, or sends `{"type": "interrupt"}` over the WebSocket.
+   - Halts and drains the Web Audio playback queue.
+   - Sends `{"type": "interrupt"}` frame over the WebSocket.
    - Backend cancels the in-flight Groq LLM / TTS task using `asyncio.Task.cancel()`.
    - Pipeline transitions state instantly back to `listening`.
 
