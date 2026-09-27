@@ -1,6 +1,5 @@
 import React from 'react';
 import { Sparkles, Copy, Check, RotateCcw, User } from 'lucide-react';
-import VADMonitor from './VADMonitor';
 import { getMsgTime } from '../utils/formatters';
 
 export default function MessageFeed({
@@ -10,28 +9,11 @@ export default function MessageFeed({
   copiedId,
   onCopy,
   onReplay,
-  isVadOnlyMode,
-  vadMetrics,
-  lastVadEvent,
-  toggleVadOnlyMode,
-  isVoiceMode,
-  volume,
   messagesEndRef,
 }) {
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 pt-6 pb-56 custom-scrollbar">
       <div className="max-w-2xl w-full mx-auto space-y-5">
-        {/* Real-time VAD Latency Monitor (Optional Diagnostic) */}
-        {isVadOnlyMode && (
-          <VADMonitor
-            vadMetrics={vadMetrics}
-            lastVadEvent={lastVadEvent}
-            isVadOnlyMode={isVadOnlyMode}
-            onToggleVadOnlyMode={toggleVadOnlyMode}
-            isVoiceMode={isVoiceMode}
-            volume={volume}
-          />
-        )}
 
         {/* Global Error Banner */}
         {error && (
@@ -65,22 +47,6 @@ export default function MessageFeed({
               key={i}
               className={`flex items-start gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}
             >
-              {/* Assistant: Quick Copy column (left of bubble) */}
-              {!isUser && msg.content && (
-                <div className="flex flex-col items-center gap-1 pt-2 shrink-0">
-                  <button
-                    onClick={() => onCopy(msgId, msg.content)}
-                    className="p-1.5 rounded-lg text-[#c3c3cc] hover:text-[#ededf3] hover:bg-[#272735] transition opacity-75 hover:opacity-100"
-                    title="Copy response"
-                  >
-                    {copiedId === msgId ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </div>
-              )}
 
               {/* Message Content Bubble */}
               <div className="group max-w-[80%] md:max-w-[70%] transition-all text-[#ededf3] px-1 py-2">
