@@ -36,23 +36,40 @@ SYSTEM_PROMPT = (
 _async_client: AsyncGroq | None = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
+PUNCTUATION_REGEX = re.compile(r'([.!?\u0964\u0965\u3002]+)(?:\s+|$)')
+ABBREVIATIONS = re.compile(r'\b(e\.g|i\.e|dr|mr|mrs|ms|prof|inc|ltd)\.$', re.IGNORECASE)
+NUMBERED_LIST = re.compile(r'^\d+\.$')
+
+
 def extract_sentences(buffer: str) -> tuple[list[str], str]:
-    """Extract complete sentence chunks from a streaming buffer, handling abbreviations & numbered lists."""
+    """
+    Extract complete sentence chunks from a streaming buffer.
+    Supports English, Devanagari (Hindi), CJK, and other scripts without buffer starvation.
+    """
     sentences = []
     while True:
-        found = False
-        for m in re.finditer(r'([.!?]+)(?:\s+|$)', buffer):
-            cand = buffer[:m.end()].strip()
-            # Avoid splitting on list items like '1.' or abbreviations like 'Dr.', 'Mr.', 'e.g.'
-            if re.fullmatch(r'^\d+\.$', cand) or re.search(r'\b(e\.g|i\.e|dr|mr|mrs)\.$', cand, re.I):
-                continue
-            if len(cand) >= 4 and re.search(r'[a-zA-Z]{2,}', cand):
-                sentences.append(cand)
-                buffer = buffer[m.end():]
-                found = True
-                break
-        if not found:
+        match = PUNCTUATION_REGEX.search(buffer)
+        if not match:
             break
+
+        candidate = buffer[:match.end()].strip()
+        # Prevent premature splitting on abbreviations and numbering
+        if NUMBERED_LIST.match(candidate) or ABBREVIATIONS.search(candidate):
+            remaining = buffer[match.end():]
+            next_match = PUNCTUATION_REGEX.search(remaining)
+            if not next_match:
+                break
+            candidate = buffer[:match.end() + next_match.end()].strip()
+            buffer = buffer[match.end() + next_match.end():]
+            sentences.append(candidate)
+            continue
+
+        if len(candidate) >= 2:
+            sentences.append(candidate)
+            buffer = buffer[match.end():]
+        else:
+            break
+
     return sentences, buffer
 
 
@@ -65,7 +82,8 @@ async def stream_sentences(message: str, history: List[Dict]) -> AsyncGenerator[
         raise ValueError("GROQ_API_KEY is not configured. Set it in the .env file.")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(history)
+    # Sliding window: cap to the most recent 12 turns to prevent context overflow & latency bloat
+    messages.extend(history[-12:] if history else [])
     messages.append({"role": "user", "content": message})
 
     stream = await _async_client.chat.completions.create(
