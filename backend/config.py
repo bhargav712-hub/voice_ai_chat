@@ -14,6 +14,7 @@ GROQ_LLM_MODEL: str = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.8-27b")
 
 # ── Edge TTS ──────────────────────────────────────────────────────────────────
 TTS_VOICE: str = os.getenv("TTS_VOICE", "en-US-GuyNeural")
+TTS_VOLUME: str = os.getenv("TTS_VOLUME", "+0%")
 
 # ── Server ────────────────────────────────────────────────────────────────────
 BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))

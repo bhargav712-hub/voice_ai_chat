@@ -26,7 +26,7 @@ import logging
 import time
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
@@ -242,9 +242,39 @@ async def websocket_conversation(websocket: WebSocket):
     Bidirectional streaming WebSocket endpoint.
     Maintains a persistent socket for speech audio upload, instant transcription,
     sentence-level streaming TTS synthesis, and sub-millisecond barge-in interruption.
+    Protected against CSWSH with atomic asyncio.Queue writes.
     """
+    # 1. Defend against Cross-Site WebSocket Hijacking (CSWSH)
+    origin = websocket.headers.get("origin")
+    if origin:
+        clean_origin = origin.rstrip("/")
+        allowed = [o.rstrip("/") for o in ALLOWED_ORIGINS]
+        if clean_origin not in allowed and "*" not in ALLOWED_ORIGINS:
+            logger.warning("[WS SEC] Rejected unauthorized origin: %s", origin)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
     await websocket.accept()
-    logger.info("[WS] Client connected to /ws/conversation")
+    logger.info("[WS] Client connected from authorized origin: %s", origin)
+
+    # 2. Re-entrant write queue to guarantee atomic serialized socket writes
+    send_queue: asyncio.Queue = asyncio.Queue()
+
+    async def socket_writer():
+        try:
+            while True:
+                msg = await send_queue.get()
+                if msg is None:
+                    break
+                await websocket.send_json(msg)
+                send_queue.task_done()
+        except Exception as write_err:
+            logger.debug("[WS] Socket writer stopped: %s", write_err)
+
+    writer_task = asyncio.create_task(socket_writer())
+
+    async def safe_send(payload: dict):
+        await send_queue.put(payload)
 
     conversation_id: str | None = None
     history: list[dict] = []
@@ -266,6 +296,7 @@ async def websocket_conversation(websocket: WebSocket):
     async def run_pipeline(user_audio_bytes: bytes):
         nonlocal active_generation_task
         t0 = time.monotonic()
+        partial_reply: list[str] = []
         try:
             # 1. Groq Whisper STT (<200ms)
             t_stt_start = time.monotonic()
@@ -274,8 +305,8 @@ async def websocket_conversation(websocket: WebSocket):
             logger.info("[WS STT] Completed in %.2fs: %r", elapsed_stt, transcript[:80])
 
             if not transcript or not transcript.strip():
-                await websocket.send_json({"type": "transcript", "role": "user", "text": ""})
-                await websocket.send_json({
+                await safe_send({"type": "transcript", "role": "user", "text": ""})
+                await safe_send({
                     "type": "done",
                     "count": 0,
                     "elapsed": round(time.monotonic() - t0, 2)
@@ -283,7 +314,7 @@ async def websocket_conversation(websocket: WebSocket):
                 return
 
             # Emit transcript immediately to client so UI bubble renders
-            await websocket.send_json({
+            await safe_send({
                 "type": "transcript",
                 "role": "user",
                 "text": transcript
@@ -299,20 +330,20 @@ async def websocket_conversation(websocket: WebSocket):
             # Update session history
             history.append({"role": "user", "content": transcript})
 
-            # 2. Pipelined Sentence-level LLM + Edge-TTS Streaming
+            # 2. Pipelined Sentence-level LLM + Edge-TTS Streaming with sliding window
             sentence_count = 0
-            full_assistant_reply: list[str] = []
+            capped_history = history[-12:-1]  # exclude the user query just added
 
-            async for sentence in llm.stream_sentences(transcript, history[:-1]):
+            async for sentence in llm.stream_sentences(transcript, capped_history):
                 sentence_count += 1
-                full_assistant_reply.append(sentence)
+                partial_reply.append(sentence)
 
                 t_tts_start = time.monotonic()
                 audio_bytes = await tts.synthesize(sentence)
                 t_tts = time.monotonic() - t_tts_start
                 audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
 
-                await websocket.send_json({
+                await safe_send({
                     "type": "sentence",
                     "index": sentence_count - 1,
                     "text": sentence,
@@ -324,7 +355,7 @@ async def websocket_conversation(websocket: WebSocket):
                 )
 
             # Persist assistant reply
-            full_reply_text = " ".join(full_assistant_reply)
+            full_reply_text = " ".join(partial_reply)
             if full_reply_text:
                 history.append({"role": "assistant", "content": full_reply_text})
                 if conversation_id:
@@ -334,7 +365,7 @@ async def websocket_conversation(websocket: WebSocket):
                         logger.warning("[WS STORAGE] Failed to auto-save assistant reply: %s", e)
 
             elapsed = time.monotonic() - t0
-            await websocket.send_json({
+            await safe_send({
                 "type": "done",
                 "count": sentence_count,
                 "elapsed": round(elapsed, 2)
@@ -342,12 +373,21 @@ async def websocket_conversation(websocket: WebSocket):
             logger.info("[WS STREAM] Finished in %.2fs (%d sentences)", elapsed, sentence_count)
 
         except asyncio.CancelledError:
-            logger.info("[WS] Generation task cancelled successfully.")
+            # Handle barge-in: record partial text so conversation context is not corrupted
+            if partial_reply:
+                interrupted_text = " ".join(partial_reply) + " [interrupted]"
+                history.append({"role": "assistant", "content": interrupted_text})
+                if conversation_id:
+                    try:
+                        storage.add_message(conversation_id, "assistant", interrupted_text)
+                    except Exception as e:
+                        logger.warning("[WS STORAGE] Failed to auto-save interrupted reply: %s", e)
+            logger.info("[WS] Pipeline cancelled cleanly during barge-in.")
             raise
         except Exception as exc:
             logger.error("[WS] Pipeline error: %s", exc)
             try:
-                await websocket.send_json({"type": "error", "message": str(exc)})
+                await safe_send({"type": "error", "message": str(exc)})
             except Exception:
                 pass
 
@@ -390,10 +430,10 @@ async def websocket_conversation(websocket: WebSocket):
                 elif msg_type == "interrupt":
                     logger.info("[WS] Received interrupt request from client")
                     await cancel_active_task()
-                    await websocket.send_json({"type": "interrupted"})
+                    await safe_send({"type": "interrupted"})
 
                 elif msg_type == "ping":
-                    await websocket.send_json({"type": "pong"})
+                    await safe_send({"type": "pong"})
 
             elif "bytes" in raw_msg:
                 audio_bytes = raw_msg["bytes"]
@@ -407,6 +447,11 @@ async def websocket_conversation(websocket: WebSocket):
         logger.error("[WS] Unexpected connection error: %s", exc)
     finally:
         await cancel_active_task()
+        await send_queue.put(None)
+        try:
+            await writer_task
+        except Exception:
+            pass
         logger.info("[WS] Connection closed and cleaned up.")
 
 

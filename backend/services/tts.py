@@ -15,7 +15,7 @@ import tempfile
 
 import edge_tts
 
-from backend.config import TTS_VOICE
+from backend.config import TTS_VOICE, TTS_VOLUME
 
 logger = logging.getLogger("voice_ai.tts")
 
@@ -26,10 +26,10 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
         return b""
 
     # Detect Devanagari (Hindi) characters: U+0900 to U+097F
-    is_hindi = any('\u0900' <= char <= '\u097F' for char in text)
+    is_hindi = any('\u0900' <= char <= '\u097F' for char in text) 
     chosen_voice = "hi-IN-SwaraNeural" if is_hindi else (voice or TTS_VOICE)
 
-    communicate = edge_tts.Communicate(text, voice=chosen_voice)
+    communicate = edge_tts.Communicate(text, voice=chosen_voice, volume=TTS_VOLUME)
     chunks: list[bytes] = []
 
     try:
@@ -42,7 +42,7 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
         try:
             # Create a FRESH instance (Communicate cannot be reused)
             fallback_voice = "hi-IN-SwaraNeural" if is_hindi else TTS_VOICE
-            fresh_comm = edge_tts.Communicate(text, voice=fallback_voice)
+            fresh_comm = edge_tts.Communicate(text, voice=fallback_voice, volume=TTS_VOLUME)
             fallback_chunks: list[bytes] = []
             async for chunk in fresh_comm.stream():
                 if chunk["type"] == "audio":
