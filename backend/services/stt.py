@@ -3,20 +3,17 @@ STT Service — Speech-to-Text via Groq Whisper.
 
 Responsibility:
   - Receive raw audio bytes from the FastAPI route.
-  - Write to a temp file (Groq SDK requires a file-like object).
-  - Call Groq Whisper (whisper-large-v3-turbo) — same model as the original CLI.
+  - Stream directly from memory via io.BytesIO (Zero disk I/O overhead).
+  - Call Groq Whisper (whisper-large-v3-turbo) in a thread pool.
   - Return the transcript as a plain string.
-
-The Groq Python SDK is synchronous, so we run it in a thread pool via
-asyncio.to_thread() to avoid blocking the FastAPI event loop.
 
 Supported browser audio formats that Groq Whisper accepts:
   webm, wav, mp4, mpeg, mpga, m4a, ogg
 """
 import asyncio
+import io
 import logging
 import os
-import tempfile
 
 from groq import Groq
 
@@ -28,32 +25,30 @@ _client: Groq | None = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
 def _transcribe_sync(file_bytes: bytes, filename: str) -> str:
-    """Blocking transcription call — executed in a thread pool."""
+    """Blocking transcription call executed in a thread pool via io.BytesIO."""
     if not _client:
         raise ValueError("GROQ_API_KEY is not configured. Set it in the .env file.")
-
-    # Determine file suffix from filename so Whisper recognises the format
-    ext = os.path.splitext(filename)[-1].lower()
-    if not ext or ext not in {".webm", ".wav", ".mp3", ".mp4", ".ogg", ".m4a"}:
-        ext = ".webm"  # browser MediaRecorder default
 
     if len(file_bytes) < 400:
         logger.debug("[STT] Audio too short (%d bytes), skipping transcription.", len(file_bytes))
         return ""
 
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        tmp.write(file_bytes)
-        tmp_path = tmp.name
+    # Determine file extension from filename so Whisper recognises the format
+    ext = os.path.splitext(filename)[-1].lower()
+    if not ext or ext not in {".webm", ".wav", ".mp3", ".mp4", ".ogg", ".m4a"}:
+        ext = ".wav"
+
+    upload_filename = f"audio{ext}"
+    audio_buffer = io.BytesIO(file_bytes)
 
     try:
-        with open(tmp_path, "rb") as f:
-            transcript = _client.audio.transcriptions.create(
-                file=(filename, f.read()),
-                model="whisper-large-v3-turbo",
-                temperature=0,
-                response_format="verbose_json",
-                language="en",
-            )
+        transcript = _client.audio.transcriptions.create(
+            file=(upload_filename, audio_buffer),
+            model="whisper-large-v3-turbo",
+            temperature=0,
+            response_format="verbose_json",
+            # Language left unset to allow automatic multilingual detection
+        )
 
         if hasattr(transcript, "text"):
             return transcript.text.strip()
@@ -66,11 +61,8 @@ def _transcribe_sync(file_bytes: bytes, filename: str) -> str:
         if "could not process file" in err_msg or "invalid_media_file" in err_msg or "400" in str(exc):
             logger.warning("[STT] Invalid media chunk received (%d bytes): %s", len(file_bytes), exc)
             return ""
+        logger.error("[STT] Transcription failed: %s", exc)
         raise
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 async def transcribe_audio(file_bytes: bytes, filename: str) -> str:
