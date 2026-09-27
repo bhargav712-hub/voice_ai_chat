@@ -9,7 +9,7 @@
  * - Forgiving pause grace period (redemptionFrames) so natural thinking pauses don't cut off
  * - Companion AnalyserNode providing real-time volume (0–1) and multi-band frequencies for the Voice Orb
  */
-import { useState, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { MicVAD, utils } from '@ricky0123/vad-web';
 
 // RMS Fallback constants (only used if WebAssembly/WASM fails)
@@ -28,6 +28,8 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
   const silenceTimerRef  = useRef(null);
   const activeStreamRef  = useRef(null);
   const isMutedRef       = useRef(false);
+  const recorderRef      = useRef(null);
+  const chunksRef        = useRef([]);
 
   /** Clean up volume analyser animation loop */
   function stopAnalyser() {
@@ -87,6 +89,19 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
             if (!isSpeakingRef.current) {
               isSpeakingRef.current = true;
               hasSpeechRef.current = true;
+              chunksRef.current = [];
+              if (activeStreamRef.current && typeof MediaRecorder !== 'undefined') {
+                try {
+                  const rec = new MediaRecorder(activeStreamRef.current);
+                  rec.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+                  };
+                  rec.start(100);
+                  recorderRef.current = rec;
+                } catch (recErr) {
+                  console.warn('[VAD Fallback] MediaRecorder error:', recErr);
+                }
+              }
               onSpeechStart?.();
             }
             if (silenceTimerRef.current) {
@@ -99,8 +114,16 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
                 silenceTimerRef.current = null;
                 if (hasSpeechRef.current) {
                   isSpeakingRef.current = false;
-                  // In fallback, we signal speech ended
-                  onSpeechEnd?.(null);
+                  hasSpeechRef.current = false;
+                  if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+                    recorderRef.current.onstop = () => {
+                      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                      onSpeechEnd?.(blob);
+                    };
+                    recorderRef.current.stop();
+                  } else {
+                    onSpeechEnd?.(null);
+                  }
                 }
               }, FALLBACK_SILENCE_MS);
             }
@@ -115,18 +138,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
       console.warn('[VAD] Volume analyser could not be initialized:', err);
     }
   }
-
-  /** Start VAD with Silero VAD neural model */
-  const [vadMetrics, setVadMetrics] = useState({
-    engine: 'Initializing...',
-    isSpeaking: false,
-    speechStartTime: null,
-    speechDuration: 0,
-    endLatency: 0,
-    samplesCount: 0,
-    blobSize: 0,
-    lastEventTime: null,
-  });
 
   const speechStartTimestampRef = useRef(null);
 
@@ -148,11 +159,11 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
         model: 'v5',
         baseAssetPath: '/',
         onnxWASMBasePath: '/wasm/',
-        positiveSpeechThreshold: 0.6,
-        negativeSpeechThreshold: 0.4,
-        redemptionFrames: 25,      // ~800ms silence tolerance (matches speculative_reopen_ms: 800ms)
-        preSpeechPadFrames: 16,    // ~512ms pre-speech buffer (matches speech_pad_ms: 500ms, preserves first words)
-        minSpeechFrames: 10,       // ~320ms minimum speech (matches min_speech_ms: 384ms, filters breaths & clicks)
+        positiveSpeechThreshold: 0.72,
+        negativeSpeechThreshold: 0.45,
+        redemptionFrames: 24,      // ~768ms silence tolerance
+        preSpeechPadFrames: 16,    // ~512ms pre-speech buffer
+        minSpeechFrames: 14,       // ~448ms minimum speech (filters ambient clicks & thuds)
         ortConfig: (ort) => {
           ort.env.wasm.numThreads = 1;
         },
@@ -162,12 +173,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
           speechStartTimestampRef.current = now;
           console.log('[Silero VAD] Speech started at', now.toFixed(1), 'ms');
           isSpeakingRef.current = true;
-          setVadMetrics(prev => ({
-            ...prev,
-            isSpeaking: true,
-            speechStartTime: now,
-            lastEventTime: Date.now(),
-          }));
           onSpeechStart?.();
         },
         onSpeechEnd: (audio) => {
@@ -186,15 +191,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
             console.error('[Silero VAD] Error encoding WAV:', encodeErr);
           }
 
-          setVadMetrics(prev => ({
-            ...prev,
-            isSpeaking: false,
-            speechDuration,
-            samplesCount: audio?.length || 0,
-            blobSize: wavBlob?.size || 0,
-            lastEventTime: Date.now(),
-          }));
-
           onSpeechEnd?.(wavBlob, {
             durationMs: speechDuration,
             samplesCount: audio?.length || 0,
@@ -204,19 +200,16 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
         onVADMisfire: () => {
           console.log('[Silero VAD] Misfire (too short, ignored)');
           isSpeakingRef.current = false;
-          setVadMetrics(prev => ({ ...prev, isSpeaking: false }));
         },
       });
 
       micVadRef.current = vadInstance;
       isFallbackRef.current = false;
-      setVadMetrics(prev => ({ ...prev, engine: 'Silero VAD v5 (ONNX WebAssembly)' }));
       console.log('[VAD] Silero VAD v5 active.');
 
     } catch (err) {
       console.warn('[VAD] Silero VAD initialization failed, falling back to Web Audio RMS:', err);
       isFallbackRef.current = true;
-      setVadMetrics(prev => ({ ...prev, engine: 'Web Audio RMS Fallback' }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -255,6 +248,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
     }
   }, []);
 
-  return { start, stop, pause, resume, vadMetrics };
+  return { start, stop, pause, resume };
 }
 
