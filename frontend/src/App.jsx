@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSession } from './hooks/useSession';
 import { useVoicePipeline } from './hooks/useVoicePipeline';
 import * as api from './services/api';
 import SessionsSidebar from './components/SessionsSidebar';
@@ -7,43 +8,52 @@ import MessageFeed from './components/MessageFeed';
 import VoiceOrb from './components/VoiceOrb';
 
 export default function App() {
-  const [sessions, setSessions] = useState([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
   const messagesEndRef = useRef(null);
 
+  // Decoupled SQLite session persistence (P-17)
+  const {
+    sessions,
+    activeSessionId,
+    transcript,
+    history,
+    refreshSessions,
+    loadSession,
+    startNewSession,
+    deleteSession,
+    appendUserMessage,
+    initAssistantMessage,
+    updateAssistantMessage,
+    finalizeAssistantMessage,
+  } = useSession();
+
+  // Lean real-time conversational audio conductor (P-17, P-18)
   const {
     isVoiceMode,
     state,
     isMuted,
+    isUserSpeaking,
     volume,
-    transcript,
     error,
-    activeSessionId,
-    vadMetrics,
-    lastVadEvent,
-    isVadOnlyMode,
-    toggleVadOnlyMode,
     enterVoiceMode,
     toggleMute,
     interrupt,
-    startNewSession,
-    loadSession,
-  } = useVoicePipeline();
-
-  // Load persistent SQLite sessions on mount and when transcript updates
-  const refreshSessions = useCallback(async () => {
-    try {
-      const list = await api.getConversations();
-      setSessions(list);
-    } catch (err) {
-      console.warn('[STORAGE] Could not fetch sessions:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshSessions();
-  }, [refreshSessions, activeSessionId, transcript.length]);
+  } = useVoicePipeline({
+    sessionId: activeSessionId,
+    history,
+    onUserTranscript: (text) => {
+      appendUserMessage(text);
+      initAssistantMessage();
+    },
+    onAssistantTextProgress: (spokenSoFar) => {
+      updateAssistantMessage(spokenSoFar);
+    },
+    onAssistantDone: () => {
+      finalizeAssistantMessage();
+      refreshSessions();
+    },
+  });
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -80,23 +90,14 @@ export default function App() {
   };
 
   // Create New Session
-  const handleCreateNewSession = () => {
-    startNewSession();
-    refreshSessions();
+  const handleCreateNewSession = async () => {
+    await startNewSession();
   };
 
   // Delete Session
   const handleDeleteSession = async (e, id) => {
     e.stopPropagation();
-    try {
-      await api.deleteConversation(id);
-      await refreshSessions();
-      if (activeSessionId === id) {
-        startNewSession();
-      }
-    } catch (err) {
-      console.error('[STORAGE] Delete error:', err);
-    }
+    await deleteSession(id);
   };
 
   // Audio Replay
@@ -156,12 +157,6 @@ export default function App() {
           copiedId={copiedId}
           onCopy={handleCopy}
           onReplay={handleReplayText}
-          isVadOnlyMode={isVadOnlyMode}
-          vadMetrics={vadMetrics}
-          lastVadEvent={lastVadEvent}
-          toggleVadOnlyMode={toggleVadOnlyMode}
-          isVoiceMode={isVoiceMode}
-          volume={volume}
           messagesEndRef={messagesEndRef}
         />
 
@@ -172,7 +167,7 @@ export default function App() {
             isMuted={isMuted}
             state={state}
             volume={volume}
-            vadMetrics={vadMetrics}
+            isUserSpeaking={isUserSpeaking}
             onOrbClick={handleOrbClick}
           />
         </div>

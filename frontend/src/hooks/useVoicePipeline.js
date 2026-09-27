@@ -1,105 +1,77 @@
 /**
- * useVoicePipeline — Full-duplex WebSocket conversational orchestration.
+ * useVoicePipeline — Full-duplex WebSocket conversational audio conductor.
  *
  * Implements:
- * - Neural Silero VAD v5 with automatic pause tolerance
- * - Persistent WebSocket connection to /ws/conversation
- * - Instant Barge-In interruption via WebSocket interrupt frame
- * - Pipelined Sentence-Level Streaming (Time-To-First-Audio < 800ms)
- * - Hands-free continuous turn-taking
- * - Microphone Mute / Unmute toggle (strike-through mic control)
- * - Speech-to-Speech Conversation Storage & Session Management
- * - Real-time Voice Orb volume dynamics
+ * - Lean WebSocket conductor pattern (resolving P-17 by extracting session persistence)
+ * - State-Aware VAD Suppression & One-Click Voice Orb Barge-In (proven P-14 baseline)
+ * - Automatic pause of neural VAD during assistant speech for 100% echo feedback immunity
+ * - Seamless resumption of hands-free listening upon playback conclusion
+ * - Authoritative neural speech state (isUserSpeaking) for the Voice Orb (P-16)
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useVAD }          from './useVAD';
+import { useVAD } from './useVAD';
 import { useAudioPlayback } from './useAudioPlayback';
-import * as api            from '../services/api';
+import * as api from '../services/api';
 
-function generateId() {
-  return 'conv_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
-}
-
-export function useVoicePipeline({ voice } = {}) {
-  const [isVoiceMode, setIsVoiceMode]   = useState(false);
-  const [state,       setState]         = useState('idle'); // 'idle' | 'listening' | 'processing' | 'speaking' | 'error'
-  const [isMuted,     setIsMuted]       = useState(false);
-  const [transcript,  setTranscript]    = useState([]);     // human instructions & AI responses
-  const [error,       setError]         = useState(null);
-  const [volume,      setVolume]        = useState(0);      // mic or assistant volume (0..1)
-  const [activeSessionId, setActiveSessionId] = useState(() => {
-    return localStorage.getItem('voice_ai_session_id') || generateId();
-  });
-
-  const [isVadOnlyMode, setIsVadOnlyMode] = useState(false);
-  const [lastVadEvent,  setLastVadEvent]  = useState(null);
+export function useVoicePipeline({
+  sessionId,
+  history = [],
+  onUserTranscript,
+  onAssistantSentence,
+  onAssistantTextProgress,
+  onAssistantDone,
+} = {}) {
+  const [isVoiceMode, setIsVoiceMode]       = useState(false);
+  const [state, setState]                   = useState('idle'); // 'idle' | 'listening' | 'processing' | 'speaking' | 'error'
+  const [isMuted, setIsMuted]               = useState(false);
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);  // Authoritative neural VAD indicator
+  const [volume, setVolume]                 = useState(0);      // Active volume 0..1
+  const [error, setError]                   = useState(null);
 
   const isVoiceModeRef       = useRef(false);
-  const isVadOnlyModeRef     = useRef(false);
   const stateRef             = useRef('idle');
   const isMutedRef           = useRef(false);
-  const historyRef           = useRef([]);
-  const streamRef            = useRef(null);      // MediaStream (mic)
-  const autoListenTimerRef   = useRef(null);
-  const abortControllerRef   = useRef(null);      // kept for legacy HTTP fallback compatibility
-  const activeSessionIdRef   = useRef(activeSessionId);
-  const speechStartTimeRef   = useRef(0);
-  const wsRef                = useRef(null);       // WebSocket connection handle
+  const streamRef            = useRef(null);
+  const wsRef                = useRef(null);
+  const vadRef               = useRef(null);
+  const sessionIdRef         = useRef(sessionId);
+  const historyRef           = useRef(history);
 
-  // Sync ref
+  // Keep session context refs in sync
   useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-    localStorage.setItem('voice_ai_session_id', activeSessionId);
-    // Update the WebSocket session context if socket is already open
+    sessionIdRef.current = sessionId;
+    historyRef.current = history;
     if (wsRef.current?.isConnected) {
       wsRef.current.updateSession(
-        activeSessionId,
-        historyRef.current.map(m => ({ role: m.role, content: m.content }))
+        sessionId,
+        history.map(m => ({ role: m.role, content: m.content }))
       );
     }
-  }, [activeSessionId]);
+  }, [sessionId, history]);
 
-  function go(s) {
+  const go = useCallback((s) => {
     stateRef.current = s;
     setState(s);
-  }
-
-  function addMsg(msg) {
-    setTranscript(prev => [...prev, msg]);
-  }
-
-  function updateLastAssistantMsg(textChunk) {
-    setTranscript(prev => {
-      if (prev.length === 0) return [{ role: 'assistant', content: textChunk }];
-      const last = prev[prev.length - 1];
-      if (last.role === 'assistant') {
-        const updated = { ...last, content: (last.content ? last.content + ' ' : '') + textChunk };
-        return [...prev.slice(0, -1), updated];
-      }
-      return [...prev, { role: 'assistant', content: textChunk }];
-    });
-  }
-
-  const toggleVadOnlyMode = useCallback(() => {
-    setIsVadOnlyMode(prev => {
-      const next = !prev;
-      isVadOnlyModeRef.current = next;
-      return next;
-    });
   }, []);
 
-  // ── Audio Playback ──────────────────────────────────────────────────────────
+  // ── Output: Web Audio Playback & Monotonic Word Pacing ──────────────────────
   const audioPlayback = useAudioPlayback({
     onStart: () => {
-      speechStartTimeRef.current = Date.now();
+      // P-14: Pause VAD listener while AI speaks to guarantee 100% echo immunity
+      vadRef.current?.pause();
       if (stateRef.current !== 'listening') {
         go('speaking');
       }
     },
+    onTextProgress: (spokenSoFar) => {
+      onAssistantTextProgress?.(spokenSoFar);
+    },
     onEnd: () => {
       setVolume(0);
+      onAssistantDone?.();
       if (isVoiceModeRef.current && !isMutedRef.current) {
-        // Continuous loop: smoothly resume listening immediately after AI finishes speaking
+        // Continuous hands-free loop: smoothly resume listening immediately after AI finishes
+        vadRef.current?.resume();
         go('listening');
       } else {
         go('idle');
@@ -112,71 +84,47 @@ export function useVoicePipeline({ voice } = {}) {
     },
   });
 
-  // ── WebSocket Connection Manager ──────────────────────────────────────────
+  // ── Transport: Persistent Bidirectional WebSocket ──────────────────────────
   const connectWebSocket = useCallback(() => {
-    // Close any existing connection
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
 
     const socket = api.createVoiceSocket({
-      conversationId: activeSessionIdRef.current,
+      conversationId: sessionIdRef.current,
       history: historyRef.current.map(m => ({ role: m.role, content: m.content })),
 
       onTranscript: (data) => {
         if (!data.text?.trim()) return;
-        // User transcript arrived from Groq Whisper (<200ms)
-        const userMsg = { role: 'user', content: data.text };
-        addMsg(userMsg);
-        historyRef.current.push(userMsg);
-        // Add placeholder for assistant response
-        setTranscript(prev => [...prev, { role: 'assistant', content: '' }]);
+        onUserTranscript?.(data.text);
       },
 
-      onSentence: ({ text: sentenceText, audioBlob: sentenceAudio }) => {
-        updateLastAssistantMsg(sentenceText);
-        if (sentenceAudio) {
+      onSentence: ({ text, audioBlob }) => {
+        if (audioBlob) {
           go('speaking');
-          audioPlayback.enqueue(sentenceAudio);
+          audioPlayback.enqueue({ blob: audioBlob, text });
         }
+        onAssistantSentence?.({ text, audioBlob });
       },
 
-      onDone: (data) => {
+      onDone: () => {
         audioPlayback.setStreamFinished();
-        // Reconstruct full assistant text from transcript state
-        setTranscript(prev => {
-          const last = prev[prev.length - 1];
-          if (last?.role === 'assistant' && last.content) {
-            historyRef.current.push({ role: 'assistant', content: last.content });
-          }
-          return prev;
-        });
       },
 
       onInterrupted: () => {
-        console.log('[WS] Server confirmed interrupt');
+        console.log('[WS] Interruption acknowledged by server');
       },
 
       onError: (err) => {
-        console.error('[WS] Error:', err);
-        setError(err.message || 'WebSocket error');
-        // Don't go to error state for transient WS errors during active voice mode
+        console.error('[WS] Connection error:', err);
+        setError(err.message || 'Voice connection issue');
       },
 
-      onOpen: () => {
-        console.log('[WS] Socket opened and initialized');
-      },
-
-      onClose: (event) => {
-        console.log('[WS] Socket closed unexpectedly, code:', event?.code);
-        // Auto-reconnect if still in voice mode
+      onClose: () => {
         if (isVoiceModeRef.current && !isMutedRef.current) {
-          console.log('[WS] Attempting reconnect in 1s...');
           setTimeout(() => {
-            if (isVoiceModeRef.current) {
-              connectWebSocket();
-            }
+            if (isVoiceModeRef.current) connectWebSocket();
           }, 1000);
         }
       },
@@ -184,10 +132,9 @@ export function useVoicePipeline({ voice } = {}) {
 
     wsRef.current = socket;
     return socket;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioPlayback]);
+  }, [audioPlayback, go, onAssistantSentence, onAssistantDone, onUserTranscript]);
 
-  // ── Process Spoken Audio (WebSocket-based) ────────────────────────────────
+  // ── Process Audio Payload ──────────────────────────────────────────────────
   const processAudio = useCallback(async (audioBlob) => {
     if (isMutedRef.current || !audioBlob || audioBlob.size === 0) {
       if (isVoiceModeRef.current && !isMutedRef.current) {
@@ -198,158 +145,47 @@ export function useVoicePipeline({ voice } = {}) {
       return;
     }
 
-    go('processing');
-    setVolume(0);
-
-    // Send audio over WebSocket if connected
     if (wsRef.current?.isConnected) {
+      go('processing');
+      setVolume(0);
       try {
         wsRef.current.sendAudio(audioBlob);
       } catch (err) {
-        console.error('[WS] Failed to send audio:', err);
-        setError('Failed to send audio. Reconnecting...');
+        console.error('[WS] Send audio failed:', err);
+        setError('Transmission failed. Reconnecting...');
         go('error');
       }
       return;
     }
 
-    // ── Fallback: HTTP-based pipeline (if WebSocket is not connected) ──────
-    console.warn('[PIPELINE] WebSocket not connected, falling back to HTTP');
+    console.warn('[PIPELINE] WebSocket disconnected. Reconnecting...');
+    setError('Voice connection lost. Reconnecting...');
+    connectWebSocket();
+    go('error');
+  }, [connectWebSocket, go]);
 
-    // Cancel any previous stream
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    const abortCtrl = new AbortController();
-    abortControllerRef.current = abortCtrl;
-
-    try {
-      // 1. STT via Groq Whisper (with abort signal support)
-      const { text } = await api.transcribe(audioBlob, abortCtrl.signal);
-      if (abortCtrl.signal.aborted) return;
-
-      if (!text?.trim()) {
-        if (isVoiceModeRef.current && !isMutedRef.current) {
-          go('listening');
-        } else {
-          go('idle');
-        }
-        return;
-      }
-
-      if (abortCtrl.signal.aborted) return;
-
-      const userMsg = { role: 'user', content: text };
-      addMsg(userMsg);
-
-      const apiHistory = historyRef.current.map(m => ({ role: m.role, content: m.content }));
-      historyRef.current.push(userMsg);
-
-      // 2. Add placeholder for assistant response
-      setTranscript(prev => [...prev, { role: 'assistant', content: '' }]);
-
-      let fullAssistantText = '';
-
-      // 3. Sentence-level streaming pipeline
-      await api.streamChat({
-        message: text,
-        history: apiHistory,
-        conversationId: activeSessionIdRef.current,
-        signal: abortCtrl.signal,
-        onSentence: ({ text: sentenceText, audioBlob: sentenceAudio }) => {
-          if (abortCtrl.signal.aborted) return;
-
-          fullAssistantText = (fullAssistantText ? fullAssistantText + ' ' : '') + sentenceText;
-          updateLastAssistantMsg(sentenceText);
-
-          if (sentenceAudio) {
-            go('speaking');
-            audioPlayback.enqueue(sentenceAudio);
-          }
-        },
-        onDone: () => {
-          if (abortCtrl.signal.aborted) return;
-          audioPlayback.setStreamFinished();
-          if (fullAssistantText) {
-            historyRef.current.push({ role: 'assistant', content: fullAssistantText });
-          }
-        },
-        onError: (err) => {
-          if (abortCtrl.signal.aborted) return;
-          console.error('[STREAM] Error during chat stream:', err);
-          setError(err.message || 'Stream generation failed');
-          go('error');
-        },
-      });
-
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('[VOICE] Pipeline error:', err);
-      const msg = err.message?.includes('fetch')
-        ? 'Cannot connect to backend server. Is FastAPI running on port 8000?'
-        : err.message || 'Error processing speech.';
-      setError(msg);
-      go('error');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioPlayback, voice, connectWebSocket]);
-
-  // ── Silero VAD Setup ────────────────────────────────────────────────────────
+  // ── Input: Silero VAD v5 with State-Aware Echo Suppression (P-14) ───────────
   const vad = useVAD({
     onSpeechStart: () => {
       if (isMutedRef.current) return;
-      setLastVadEvent({
-        type: 'start',
-        timestamp: Date.now(),
-      });
 
-      // Instant Barge-In: if user speaks while AI is speaking or thinking, cut off immediately!
-      if (!isVadOnlyModeRef.current && (stateRef.current === 'speaking' || stateRef.current === 'processing')) {
-        // Prevent accidental transient trigger during the first 180ms of playback starting
-        if (stateRef.current === 'speaking' && (Date.now() - speechStartTimeRef.current < 180)) {
-          return;
-        }
-        console.log('[PIPELINE] Barge-in triggered by user speech!');
-
-        // Send interrupt via WebSocket (instant cancellation)
-        if (wsRef.current?.isConnected) {
-          wsRef.current.interrupt();
-        }
-        // Also abort any HTTP fallback streams
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-        audioPlayback.stop();
-        go('listening');
-      }
-    },
-    onSpeechEnd: async (wavBlob, metrics) => {
-      if (isMutedRef.current) return;
-      setLastVadEvent({
-        type: 'end',
-        timestamp: Date.now(),
-        metrics,
-        wavBlob,
-      });
-
-      // If in VAD-only test mode, do not send to backend
-      if (isVadOnlyModeRef.current) {
-        console.log('[VAD-ONLY] Speech captured without sending to backend:', metrics);
+      // P-14 Guard: Strict suppression while assistant is actively speaking or processing
+      if (stateRef.current === 'speaking' || stateRef.current === 'processing') {
         return;
       }
 
-      // Safety fallback: if state was speaking or processing when user finished interrupting
+      if (stateRef.current === 'listening') {
+        setIsUserSpeaking(true);
+      }
+    },
+
+    onSpeechEnd: async (wavBlob) => {
+      setIsUserSpeaking(false);
+      if (isMutedRef.current) return;
+
+      // P-14 Guard: Discard any audio events triggered while speaking
       if (stateRef.current === 'speaking' || stateRef.current === 'processing') {
-        if (wsRef.current?.isConnected) {
-          wsRef.current.interrupt();
-        }
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
-        audioPlayback.stop();
-        go('listening');
+        return;
       }
 
       if (stateRef.current !== 'listening') return;
@@ -360,6 +196,7 @@ export function useVoicePipeline({ voice } = {}) {
         go('listening');
       }
     },
+
     onVolumeChange: (v) => {
       if (stateRef.current === 'listening' && !isMutedRef.current) {
         setVolume(v);
@@ -367,7 +204,9 @@ export function useVoicePipeline({ voice } = {}) {
     },
   });
 
-  // ── Internal Listen Starter ────────────────────────────────────────────────
+  vadRef.current = vad;
+
+  // ── Internal Listening Starter ─────────────────────────────────────────────
   const startListeningInternal = useCallback(async () => {
     if (stateRef.current === 'processing' || isMutedRef.current) return;
 
@@ -375,7 +214,6 @@ export function useVoicePipeline({ voice } = {}) {
     go('listening');
     setVolume(0);
 
-    // Reuse existing live stream if active
     if (streamRef.current && streamRef.current.active && streamRef.current.getAudioTracks().some(t => t.readyState === 'live')) {
       vad.resume();
       return;
@@ -397,24 +235,21 @@ export function useVoicePipeline({ voice } = {}) {
         video: false,
       });
       streamRef.current = stream;
-
       await vad.start(stream);
-
     } catch (err) {
       console.error('[MIC] Error:', err);
       let msg = err.message || 'Microphone error';
       if (err.name === 'NotAllowedError') {
-        msg = 'Microphone permission denied. Please allow microphone access in your browser.';
+        msg = 'Microphone permission denied. Please allow microphone access.';
       }
       setError(msg);
       go('error');
     }
-  }, [vad]);
+  }, [go, vad]);
 
-  // ── Mute / Unmute Toggle (Strike-through Mic Action) ───────────────────────
+  // ── Controls: Voice Mode, Mute & Voice Orb Barge-In ────────────────────────
   const toggleMute = useCallback(() => {
     if (isMutedRef.current) {
-      // Unmute: resume listening
       isMutedRef.current = false;
       setIsMuted(false);
       vad.resume();
@@ -422,45 +257,35 @@ export function useVoicePipeline({ voice } = {}) {
         startListeningInternal();
       }
     } else {
-      // Mute: pause listening and stop audio analysis
       isMutedRef.current = true;
       setIsMuted(true);
+      setIsUserSpeaking(false);
       vad.pause();
       setVolume(0);
       if (stateRef.current === 'listening') {
         go('idle');
       }
     }
-  }, [vad, startListeningInternal]);
+  }, [go, startListeningInternal, vad]);
 
-  // ── Enter Voice Mode ───────────────────────────────────────────────────────
   const enterVoiceMode = useCallback(() => {
     setIsVoiceMode(true);
     isVoiceModeRef.current = true;
     isMutedRef.current = false;
     setIsMuted(false);
 
-    // Open persistent WebSocket connection
+    audioPlayback.warmup?.();
     connectWebSocket();
-
     startListeningInternal();
-  }, [startListeningInternal, connectWebSocket]);
+  }, [audioPlayback, connectWebSocket, startListeningInternal]);
 
-  // ── Exit Voice Mode ────────────────────────────────────────────────────────
   const exitVoiceMode = useCallback(() => {
     setIsVoiceMode(false);
     isVoiceModeRef.current = false;
-    clearTimeout(autoListenTimerRef.current);
 
-    // Close WebSocket connection
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
-    }
-
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
     }
 
     vad.stop();
@@ -471,67 +296,27 @@ export function useVoicePipeline({ voice } = {}) {
     audioPlayback.stop();
     go('idle');
     setVolume(0);
-  }, [vad, audioPlayback]);
+    setIsUserSpeaking(false);
+  }, [audioPlayback, go, vad]);
 
-  // ── Manual Interrupt / Barge-In Click ─────────────────────────────────────
+  // P-14: Instant Voice Orb Click-to-Interrupt
   const interrupt = useCallback(() => {
-    // Send interrupt via WebSocket
     if (wsRef.current?.isConnected) {
       wsRef.current.interrupt();
     }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
     audioPlayback.stop();
+    vadRef.current?.resume();
     if (isVoiceModeRef.current && !isMutedRef.current) {
       startListeningInternal();
     } else {
       go('idle');
     }
-  }, [audioPlayback, startListeningInternal]);
-
-  // ── Speech-to-Speech Session Storage Controls ─────────────────────────────
-  const startNewSession = useCallback(async () => {
-    const newId = generateId();
-    setActiveSessionId(newId);
-    activeSessionIdRef.current = newId;
-    setTranscript([]);
-    historyRef.current = [];
-    setError(null);
-
-    try {
-      await api.createConversation('New Voice Session', newId);
-    } catch (e) {
-      console.warn('[STORAGE] Could not pre-create session on backend:', e);
-    }
-  }, []);
-
-  const loadSession = useCallback(async (sessionId) => {
-    try {
-      const conv = await api.getConversation(sessionId);
-      if (conv) {
-        setActiveSessionId(conv.id);
-        activeSessionIdRef.current = conv.id;
-        setTranscript(conv.messages || []);
-        historyRef.current = (conv.messages || []).map(m => ({ role: m.role, content: m.content }));
-      }
-    } catch (err) {
-      console.error('[STORAGE] Error loading session:', err);
-    }
-  }, []);
+  }, [audioPlayback, go, startListeningInternal]);
 
   // Cleanup on unmount
   useEffect(() => {
-    const timer = autoListenTimerRef.current;
-    const abortCtrl = abortControllerRef.current;
     const stream = streamRef.current;
     return () => {
-      clearTimeout(timer);
-      if (abortCtrl) {
-        abortCtrl.abort();
-      }
-      // Close WebSocket on unmount
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -549,22 +334,12 @@ export function useVoicePipeline({ voice } = {}) {
     isVoiceMode,
     state,
     isMuted,
+    isUserSpeaking,
     volume,
-    transcript,
     error,
-    activeSessionId,
-    vadMetrics: vad.vadMetrics,
-    lastVadEvent,
-    isVadOnlyMode,
-    toggleVadOnlyMode,
     enterVoiceMode,
     exitVoiceMode,
     toggleMute,
-    startListening: startListeningInternal,
-    stopListening: () => vad.pause(),
     interrupt,
-    startNewSession,
-    loadSession,
-    clearTranscript: startNewSession,
   };
 }
