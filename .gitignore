@@ -22,8 +22,9 @@ ENV/
 .idea/
 
 # Local databases & persistent storage
-data/*.db
+data/
 *.db
+*.db-*
 
 # Practice Sandbox & Local Labs
 practice_sandbox/
