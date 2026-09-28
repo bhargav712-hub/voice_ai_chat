@@ -17,7 +17,7 @@ import os
 
 from groq import Groq
 
-from backend.config import GROQ_API_KEY
+from backend.config import GROQ_API_KEY, STT_LANGUAGE
 
 logger = logging.getLogger("voice_ai.stt")
 
@@ -42,13 +42,18 @@ def _transcribe_sync(file_bytes: bytes, filename: str) -> str:
     audio_buffer = io.BytesIO(file_bytes)
 
     try:
-        transcript = _client.audio.transcriptions.create(
-            file=(upload_filename, audio_buffer),
-            model="whisper-large-v3-turbo",
-            temperature=0,
-            response_format="verbose_json",
-            # Language left unset to allow automatic multilingual detection
-        )
+        kwargs = {
+            "file": (upload_filename, audio_buffer),
+            "model": "whisper-large-v3-turbo",
+            "temperature": 0,
+            "response_format": "verbose_json",
+        }
+        # Enforce English (or STT_LANGUAGE) to bypass Whisper language-id latency (~50-80ms)
+        # and prevent misclassification of accented speech or short utterances.
+        if STT_LANGUAGE:
+            kwargs["language"] = STT_LANGUAGE
+
+        transcript = _client.audio.transcriptions.create(**kwargs)
 
         if hasattr(transcript, "text"):
             return transcript.text.strip()
