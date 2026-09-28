@@ -1,18 +1,18 @@
 """
 Automated Integration and Unit Test Suite for Conversational Voice AI.
 Tests:
-  - Universal Multilingual Sentence Boundary Tokenizer (Latin, Hindi Devanagari, Abbreviations)
+  - Universal English Sentence Boundary Tokenizer (Standard prose, Abbreviations, Decimals)
   - SQLite WAL Mode & Cascading Deletion Durability
   - In-Memory Audio Validation
-  - Health & CORS/Origin Policies
+  - English Language Configuration & Neural Voice Defaults
 """
 import pytest
 from backend.services.llm import extract_sentences
 from backend.services import storage
 
 
-def test_extract_sentences_multilingual():
-    """Verify sentence boundaries across Latin, English abbreviations, and Devanagari."""
+def test_extract_sentences_english():
+    """Verify sentence boundaries across standard English prose, abbreviations, and questions."""
     # 1. Standard English sentences
     text = "Hello there! How can I help you today? Let us begin."
     sentences, leftover = extract_sentences(text)
@@ -29,12 +29,13 @@ def test_extract_sentences_multilingual():
     assert "Dr. Watson" in sentences[0]
     assert sentences[1] == "Thank you!"
 
-    # 3. Devanagari (Hindi) punctuation (Poorna Viram \u0964)
-    text_hindi = "नमस्ते आप कैसे हैं। मैं आपकी सहायता कर सकता हूँ।"
-    sentences, leftover = extract_sentences(text_hindi)
-    assert len(sentences) == 2
-    assert "नमस्ते" in sentences[0]
-    assert "सहायता" in sentences[1]
+    # 3. Conversational multi-clause sentences with mixed punctuation
+    text_dialogue = "Wait, are you sure? Yes, absolutely! We are ready."
+    sentences, leftover = extract_sentences(text_dialogue)
+    assert len(sentences) == 3
+    assert sentences[0] == "Wait, are you sure?"
+    assert sentences[1] == "Yes, absolutely!"
+    assert sentences[2] == "We are ready."
 
 
 def test_storage_concurrency_and_cascade():
@@ -66,3 +67,18 @@ def test_stt_short_audio_rejection():
 
     result = _transcribe_sync(b"tiny_chunk", "audio.wav")
     assert result == ""
+
+
+def test_language_configuration():
+    """Verify that English is configured as the primary language across STT, LLM, and TTS."""
+    from backend.config import STT_LANGUAGE, TTS_VOICE
+    from backend.services.llm import SYSTEM_PROMPT
+
+    # STT: Whisper forced to English
+    assert STT_LANGUAGE == "en"
+
+    # LLM: Explicit prompt constraint to speak English
+    assert "English" in SYSTEM_PROMPT
+
+    # TTS: Default neural voice is English
+    assert TTS_VOICE.startswith("en-")
