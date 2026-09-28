@@ -25,9 +25,7 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
     if not text or not text.strip():
         return b""
 
-    # Detect Devanagari (Hindi) characters: U+0900 to U+097F
-    is_hindi = any('\u0900' <= char <= '\u097F' for char in text) 
-    chosen_voice = "hi-IN-SwaraNeural" if is_hindi else (voice or TTS_VOICE)
+    chosen_voice = voice or TTS_VOICE
 
     communicate = edge_tts.Communicate(text, voice=chosen_voice, volume=TTS_VOLUME)
     chunks: list[bytes] = []
@@ -41,8 +39,7 @@ async def synthesize(text: str, voice: str | None = None) -> bytes:
         logger.warning("[TTS] In-memory stream failed (%s), attempting fresh fallback", exc)
         try:
             # Create a FRESH instance (Communicate cannot be reused)
-            fallback_voice = "hi-IN-SwaraNeural" if is_hindi else TTS_VOICE
-            fresh_comm = edge_tts.Communicate(text, voice=fallback_voice, volume=TTS_VOLUME)
+            fresh_comm = edge_tts.Communicate(text, voice=chosen_voice, volume=TTS_VOLUME)
             fallback_chunks: list[bytes] = []
             async for chunk in fresh_comm.stream():
                 if chunk["type"] == "audio":

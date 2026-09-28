@@ -27,6 +27,7 @@ logger = logging.getLogger("voice_ai.llm")
 
 SYSTEM_PROMPT = (
     "You are a friendly, highly intelligent spoken voice assistant. "
+    "Always converse and formulate your responses strictly in clear, natural English. "
     "For standard greetings and small talk, keep answers concise (1–3 conversational sentences). "
     "When the user asks in-depth, technical, or explanatory questions, provide clear, comprehensive explanations "
     "broken into natural, spoken sentences. "
@@ -36,7 +37,7 @@ SYSTEM_PROMPT = (
 _async_client: AsyncGroq | None = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
-PUNCTUATION_REGEX = re.compile(r'([.!?\u0964\u0965\u3002]+)(?:\s+|$)')
+PUNCTUATION_REGEX = re.compile(r'([.!?]+)(?:\s+|$)')
 ABBREVIATIONS = re.compile(r'\b(e\.g|i\.e|dr|mr|mrs|ms|prof|inc|ltd)\.$', re.IGNORECASE)
 NUMBERED_LIST = re.compile(r'^\d+\.$')
 
@@ -44,7 +45,8 @@ NUMBERED_LIST = re.compile(r'^\d+\.$')
 def extract_sentences(buffer: str) -> tuple[list[str], str]:
     """
     Extract complete sentence chunks from a streaming buffer.
-    Supports English, Devanagari (Hindi), CJK, and other scripts without buffer starvation.
+    Splits on standard English sentence delimiters (. ! ?) with lookahead protection
+    against abbreviations (e.g., Dr., i.e.) and numbered lists (1., 2.).
     """
     sentences = []
     while True:
