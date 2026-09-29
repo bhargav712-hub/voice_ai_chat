@@ -24,6 +24,7 @@ logger = logging.getLogger("voice_ai.stt")
 _client: Groq | None = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
+# _transcribe_sync: Performs zero-disk-I/O transcription by wrapping audio bytes in an in-memory io.BytesIO stream and querying Groq Whisper large-v3-turbo.
 def _transcribe_sync(file_bytes: bytes, filename: str) -> str:
     """Blocking transcription call executed in a thread pool via io.BytesIO."""
     if not _client:
@@ -70,6 +71,7 @@ def _transcribe_sync(file_bytes: bytes, filename: str) -> str:
         raise
 
 
+# transcribe_audio: Asynchronous wrapper offloading synchronous Whisper API calls to a background thread pool to prevent blocking the FastAPI event loop.
 async def transcribe_audio(file_bytes: bytes, filename: str) -> str:
     """Async wrapper — runs the blocking Groq call in a thread pool."""
     return await asyncio.to_thread(_transcribe_sync, file_bytes, filename)

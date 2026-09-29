@@ -20,6 +20,7 @@ from backend.config import TTS_VOICE, TTS_VOLUME
 logger = logging.getLogger("voice_ai.tts")
 
 
+# synthesize: Converts text into spoken MP3 bytes entirely in memory using Edge-TTS, auto-switching neural voices for Devanagari Hindi vs English.
 async def synthesize(text: str, voice: str | None = None) -> bytes:
     """Synthesize text → MP3 bytes using Edge TTS (in-memory stream for minimum latency)."""
     if not text or not text.strip():

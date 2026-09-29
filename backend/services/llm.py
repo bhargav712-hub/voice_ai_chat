@@ -42,6 +42,7 @@ ABBREVIATIONS = re.compile(r'\b(e\.g|i\.e|dr|mr|mrs|ms|prof|inc|ltd)\.$', re.IGN
 NUMBERED_LIST = re.compile(r'^\d+\.$')
 
 
+# extract_sentences: Splits streaming token buffers on universal sentence boundaries (. ! ?) with lookahead protection against abbreviations and numbered lists.
 def extract_sentences(buffer: str) -> tuple[list[str], str]:
     """
     Extract complete sentence chunks from a streaming buffer.
@@ -75,6 +76,7 @@ def extract_sentences(buffer: str) -> tuple[list[str], str]:
     return sentences, buffer
 
 
+# stream_sentences: Queries Groq LPUs with a 12-turn sliding history window and yields complete sentence strings as fast as they are generated.
 async def stream_sentences(message: str, history: List[Dict]) -> AsyncGenerator[str, None]:
     """
     Stream sentence chunks from Groq LLM as they become available.

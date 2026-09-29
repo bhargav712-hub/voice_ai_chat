@@ -17,6 +17,7 @@ os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "conversations.db")
 
 
+# _get_connection: Opens SQLite with WAL journal mode, a 15-second busy timeout, and foreign key cascades to eliminate database locking errors.
 def _get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
@@ -145,6 +146,7 @@ def get_conversation(conv_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
+# add_message: Inserts a message turn (user or assistant) linked to a session ID and updates the conversation timestamp.
 def add_message(conv_id: str, role: str, content: str) -> Dict[str, Any]:
     """Append a human voice instruction or AI spoken response to a conversation."""
     # Ensure conversation exists
@@ -186,6 +188,7 @@ def add_message(conv_id: str, role: str, content: str) -> Dict[str, Any]:
     return {"id": msg_id, "conversation_id": conv_id, "role": role, "content": content, "created_at": now}
 
 
+# delete_conversation: Removes a conversation row from SQLite, which automatically cascades to delete all associated message rows.
 def delete_conversation(conv_id: str) -> bool:
     """Delete a conversation and its messages."""
     with _get_connection() as conn:

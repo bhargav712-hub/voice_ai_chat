@@ -236,6 +236,7 @@ async def text_to_speech(req: TTSRequest):
 
 # ── Full-Duplex WebSocket Streaming Route ─────────────────────────────────────
 
+# websocket_conversation: Full-duplex WebSocket endpoint defending against CSWSH and orchestrating audio transcription, LLM reasoning, and streaming TTS.
 @app.websocket("/ws/conversation")
 async def websocket_conversation(websocket: WebSocket):
     """
@@ -260,6 +261,7 @@ async def websocket_conversation(websocket: WebSocket):
     # 2. Re-entrant write queue to guarantee atomic serialized socket writes
     send_queue: asyncio.Queue = asyncio.Queue()
 
+    # socket_writer: Serialized worker consuming from an asyncio.Queue to guarantee thread-safe, atomic JSON and binary packet delivery across the socket.
     async def socket_writer():
         try:
             while True:
@@ -293,6 +295,7 @@ async def websocket_conversation(websocket: WebSocket):
                 logger.debug("[WS] Task cancelled with error: %s", task_err)
             active_generation_task = None
 
+    # run_pipeline: Coordinates Groq Whisper STT, streaming LLM sentence extraction, Edge-TTS audio synthesis, and atomic cancellation handling for a voice turn.
     async def run_pipeline(user_audio_bytes: bytes):
         nonlocal active_generation_task
         t0 = time.monotonic()
