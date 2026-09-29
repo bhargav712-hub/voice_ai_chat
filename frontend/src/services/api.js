@@ -26,6 +26,7 @@ async function handleError(res) {
 /**
  * POST /api/tts
  * Sends { text, voice? } → returns audio Blob (audio/mpeg)
+ * tts: On-demand HTTP synthesis calling /api/tts to replay past assistant transcripts as playable MP3 audio.
  */
 export async function tts(text, voice) {
   const res = await fetch(`${BASE}/api/tts`, {
@@ -39,6 +40,7 @@ export async function tts(text, voice) {
 
 /**
  * Helper to convert base64 MP3 string to Blob
+ * base64ToBlob: Decodes incoming base64 MP3 chunks into binary Uint8Array buffers for Web Audio playback.
  */
 export function base64ToBlob(base64, contentType = 'audio/mpeg') {
   const byteCharacters = atob(base64);
