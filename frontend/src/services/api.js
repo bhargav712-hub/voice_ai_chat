@@ -22,26 +22,6 @@ async function handleError(res) {
   return res;
 }
 
-/**
- * POST /api/transcribe
- * Sends browser audio (WebM/Opus) → returns { text: string }
- */
-export async function transcribe(audioBlob, signal) {
-  if (!audioBlob || audioBlob.size < 400) {
-    return { text: '' };
-  }
-
-  const form = new FormData();
-  const filename = audioBlob.type?.includes('webm') ? 'audio.webm'
-    : audioBlob.type?.includes('wav')               ? 'audio.wav'
-    : 'audio.wav';
-  form.append('audio', audioBlob, filename);
-
-  const res = await fetch(`${BASE}/api/transcribe`, { method: 'POST', body: form, signal });
-  await handleError(res);
-  return res.json(); // { text }
-}
-
 
 /**
  * POST /api/tts
@@ -76,12 +56,6 @@ export function base64ToBlob(base64, contentType = 'audio/mpeg') {
   return new Blob(byteArrays, { type: contentType });
 }
 
-/** GET /api/health → { status: "ok" } */
-export async function health() {
-  const res = await fetch(`${BASE}/api/health`);
-  await handleError(res);
-  return res.json();
-}
 
 /**
  * Speech-to-Speech Conversation Storage APIs

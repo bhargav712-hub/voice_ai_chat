@@ -119,7 +119,7 @@ export default function SessionsSidebar({
           />
           <span>Web Speech Engine</span>
         </div>
-        <button
+        {/* <button
           onClick={onToggleMute}
           className={`p-2 rounded-lg border transition ${
             isMuted
@@ -129,7 +129,7 @@ export default function SessionsSidebar({
           title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
         >
           {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-        </button>
+        </button> */}
       </div>
     </aside>
   );
