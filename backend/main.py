@@ -26,12 +26,12 @@ import logging
 import time
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 
 from backend.config import ALLOWED_ORIGINS, BACKEND_PORT
-from backend.schemas.chat import ChatRequest
+# from backend.schemas.chat import ChatRequest  # Legacy schema — not used in current WebSocket architecture
 from backend.schemas.tts import TTSRequest
 from backend.services import llm, stt, storage, tts
 
@@ -66,107 +66,6 @@ app.add_middleware(
 async def health():
     """Liveness probe — confirms the server is reachable."""
     return {"status": "ok"}
-
-
-@app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    """
-    Accept browser audio (WebM/Opus by default from MediaRecorder) and
-    return a transcript via Groq Whisper.
-    """
-    t0 = time.monotonic()
-    logger.info("[STT] Started  —  file=%s  type=%s", audio.filename, audio.content_type)
-
-    try:
-        file_bytes = await audio.read()
-        if not file_bytes:
-            raise HTTPException(status_code=400, detail="Empty audio file received.")
-
-        text = await stt.transcribe_audio(file_bytes, audio.filename or "audio.webm")
-        elapsed = time.monotonic() - t0
-        logger.info("[STT] Completed: %.2fs  —  %r", elapsed, text[:80])
-        return {"text": text}
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("[STT] Failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {exc}")
-
-
-
-
-@app.post("/api/chat-stream")
-async def chat_stream(req: ChatRequest):
-    """
-    Sentence-level streaming conversation endpoint:
-    Streams SSE events containing generated text sentences and their pre-synthesized
-    MP3 audio (base64) as soon as each sentence finishes generation.
-    Enables instant Time-To-First-Audio (< 800ms) and interruptibility.
-    """
-    logger.info("[STREAM] Started  —  message=%r", req.message[:80])
-    history = [{"role": m.role, "content": m.content} for m in req.history]
-
-    # Pre-save human voice instruction if session ID exists
-    if req.conversation_id:
-        try:
-            storage.add_message(req.conversation_id, "user", req.message)
-        except Exception as store_err:
-            logger.warning("[STORAGE] Failed to auto-save user voice instruction: %s", store_err)
-
-    async def event_generator():
-        t0 = time.monotonic()
-        sentence_count = 0
-        full_assistant_reply: list[str] = []
-        try:
-            async for sentence in llm.stream_sentences(req.message, history):
-                sentence_count += 1
-                full_assistant_reply.append(sentence)
-                t_tts_start = time.monotonic()
-                audio_bytes = await tts.synthesize(sentence)
-                t_tts = time.monotonic() - t_tts_start
-                audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
-
-                payload = json.dumps({
-                    "index": sentence_count - 1,
-                    "text": sentence,
-                    "audio": audio_b64,
-                })
-                yield f"event: sentence\ndata: {payload}\n\n"
-                logger.info(
-                    "[STREAM] Sent sentence %d (tts=%.2fs): %r",
-                    sentence_count, t_tts, sentence[:60]
-                )
-
-            # Persist full assistant spoken response
-            if req.conversation_id and full_assistant_reply:
-                try:
-                    storage.add_message(
-                        req.conversation_id,
-                        "assistant",
-                        " ".join(full_assistant_reply)
-                    )
-                except Exception as store_err:
-                    logger.warning("[STORAGE] Failed to auto-save assistant voice response: %s", store_err)
-
-            elapsed = time.monotonic() - t0
-            yield f"event: done\ndata: {json.dumps({'count': sentence_count, 'elapsed': round(elapsed, 2)})}\n\n"
-            logger.info("[STREAM] Finished in %.2fs (%d sentences)", elapsed, sentence_count)
-
-        except Exception as exc:
-            logger.error("[STREAM] Error: %s", exc)
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
 
 # ── Speech-to-Speech Conversation Storage Routes ──────────────────────────────
 
