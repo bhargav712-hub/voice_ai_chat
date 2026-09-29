@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Sparkles, Volume2 } from 'lucide-react';
+import { Mic, MicOff, Square, Sparkles, Volume2 } from 'lucide-react';
 
 const BAR_COUNT = 18;
 // Baseline wave profile weights to create a natural frequency curve
 const BAR_WEIGHTS = [0.25, 0.4, 0.6, 0.85, 1.0, 0.9, 0.75, 1.1, 0.95, 0.8, 1.05, 0.7, 0.85, 0.6, 0.45, 0.35, 0.25, 0.15];
 
+// VoiceOrb: Renders the 60fps glowing voice marble using square-root volume scaling and state-driven color auras (listening, thinking, speaking, muted).
 export default function VoiceOrb({
   isVoiceMode = false,
   isMuted = false,
@@ -12,6 +13,7 @@ export default function VoiceOrb({
   volume = 0,
   isUserSpeaking: propIsUserSpeaking = false,
   onOrbClick,
+  onToggleMute,
 }) {
   // P-16: Visual Decay Hysteresis (280ms hold-time) to absorb inter-syllable micro-dips
   const [visualUserSpeaking, setVisualUserSpeaking] = useState(false);
@@ -200,6 +202,24 @@ export default function VoiceOrb({
             </div>
           </button>
         </div>
+
+        {/* ── Right-Side Toggle Mute Action Button ── */}
+        {onToggleMute && (
+          <div className="flex items-center">
+            <button
+              onClick={onToggleMute}
+              className={`p-2 rounded-lg border transition ${
+                isMuted
+                  ? 'bg-red-500/20 text-red-300 border-red-500/30'
+                  : 'bg-[#272735] text-[#ededf3] border-[#70707d]/20 hover:bg-[#323244]'
+              }`}
+              title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+              aria-label={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+            >
+              {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── State Typography & Live Status ── */}

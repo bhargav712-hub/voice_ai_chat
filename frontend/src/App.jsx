@@ -78,6 +78,7 @@ export default function App() {
     return 'Voice Mode Inactive';
   };
 
+  // handleOrbClick: Single-action central button handler that interrupts active speech, starts voice mode, or toggles microphone mute depending on state.
   // Orb Action
   const handleOrbClick = () => {
     if (isSpeaking) {
@@ -169,6 +170,7 @@ export default function App() {
             volume={volume}
             isUserSpeaking={isUserSpeaking}
             onOrbClick={handleOrbClick}
+            onToggleMute={toggleMute}
           />
         </div>
       </main>
