@@ -74,6 +74,9 @@ Synthesized speech playing through laptop speakers leaks physically into the lap
 1. Enforce hardware Acoustic Echo Cancellation: `navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } })`.
 2. Dynamically pause the VAD listener when the assistant begins speaking (`vadRef.current?.pause()`), and re-arm it only when playback finishes (`vadRef.current?.resume()`).
 
+> [!NOTE]
+> **Known Side-Effect on Barge-In:** While pausing the VAD listener successfully prevents speaker echo feedback, it makes the microphone deaf during AI speech. Consequently, **conversational voice barge-in is currently inactive/non-functional** during assistant playback and remains an open engineering item for future dual-threshold AEC improvements.
+
 ---
 
 ## 5. Non-Latin Streaming Starvation Bug

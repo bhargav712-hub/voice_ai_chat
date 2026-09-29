@@ -308,25 +308,23 @@ Format:
 ### [P-18] Deaf Assistant During Audio Playback (Voice Barge-In Blockade)
 
 * **Problem Statement:**  
-  When the AI assistant is continuing its spoken response, it cannot be interrupted by the user's voice; the system completely ignores user speech until the assistant finishes talking.  
-  This behavior is caused by a defensive suppression mechanism originally installed to solve [P-14] (Acoustic Echo Feedback Self-Interruption):
-  1. [`frontend/src/hooks/useVoicePipeline.js:82`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js#L82): `vadRef.current?.pause()` was invoked inside `audioPlayback.onStart`. The moment the assistant started playing audio through speakers, the microphone's Silero VAD was completely paused (`micVad.pause()`), and `isMutedRef.current` was set to `true`.
-  2. [`frontend/src/hooks/useVAD.js:171,179,233-240`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVAD.js#L171): Inside `MicVAD`, `onSpeechStart` and `onSpeechEnd` callbacks immediately exited early via `if (isMutedRef.current) return`, discarding all microphone input while paused.
-  3. [`frontend/src/hooks/useVoicePipeline.js`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js): Even if speech events slipped through, explicit state guards discarded the audio buffer and prevented interruption.
-  4. [`frontend/src/hooks/useVoicePipeline.js`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js): `vadRef.current?.resume()` was only called in `audioPlayback.onEnd`, meaning the microphone remained deaf for the entire duration of the assistant's speech.
-  5. [`frontend/src/App.jsx`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/App.jsx): Barge-in was delegated exclusively to a physical mouse click on the Voice Orb, blocking natural voice-driven interruption.
-* **Approaches Considered:**
+  When the AI assistant is playing its spoken response, conversational voice barge-in **does not work properly**; the system ignores human speech until the assistant finishes talking.  
+  Although interruption handler functions (`interrupt()`, `cancel_active_task()`, `audioPlayback.stop()`) have been created across the stack, full voice-activated interruption is blocked by the echo-prevention mechanism installed to solve [P-14] (Acoustic Echo Feedback Self-Interruption):
+  1. [`frontend/src/hooks/useVoicePipeline.js:62`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js#L62): `vadRef.current?.pause()` is explicitly invoked inside `audioPlayback.onStart`. The moment the assistant starts playing audio through speakers, the microphone's Silero VAD is paused (`micVad.pause()`), making the browser microphone completely deaf to the user.
+  2. [`frontend/src/hooks/useVAD.js:180`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVAD.js#L180): Inside `MicVAD`, `onSpeechEnd` immediately exits early via `if (isMutedRef.current) return`, discarding all microphone input while playback is active.
+  3. [`frontend/src/hooks/useVoicePipeline.js:75`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js#L75): `vadRef.current?.resume()` is only executed inside `audioPlayback.onEnd`, meaning the mic listener remains paused for the entire duration of the assistant's speech.
+  4. **Click-to-Interrupt Race Conditions:** Even when the user manually clicks the Voice Orb to trigger `interrupt()`, already in-flight sentence chunks over the WebSocket and queued Web Audio buffers can cause brief stutter before the cutoff takes full effect.
+* **Approaches Evaluated:**
   * **Approach A (Unconditional VAD Unpause & Naive Speech Interrupt):** Remove `vad.pause()` and trigger `interrupt()` immediately on `onSpeechStart`.  
-    *Why Rejected:* Causes the severe regression documented in [P-14]. On devices without headphones, the assistant's voice from laptop speakers echoes back into the microphone, causing the AI to trigger `onSpeechStart` and cut its own speech off after 100–300ms.
-  * **Approach B (Orb-Only Push/Click-to-Interrupt Status Quo):** Keep the microphone deaf during playback and require the user to click the Voice Orb or press a key to interrupt.  
-    *Why Rejected:* Defeats hands-free full-duplex conversational voice interaction; users naturally expect to interrupt an AI verbally just like in human conversation.
-  * **Approach C (Asymmetric Dual-Threshold Full-Duplex VAD & Echo Guard Window — CHOSEN):**  
+    *Why Rejected:* Causes severe regression [P-14]. On laptops without headphones, the assistant's voice from speakers leaks into the microphone, causing the AI to trigger `onSpeechStart` and cut its own speech off after 100–300ms (self-interruption loop).
+  * **Approach B (Status Quo — Mic Deaf During Playback):** Keep the microphone deaf during playback via `vadRef.current?.pause()`.  
+    *Trade-off:* Guarantees 100% echo immunity on all hardware, but completely blocks voice-driven barge-in.
+  * **Approach C (Asymmetric Dual-Threshold Full-Duplex VAD & Echo Guard Window — FUTURE RFC):**  
     1. **Full-Duplex VAD with Hardware AEC:** Keep Silero VAD running continuously during audio playback (remove `vad.pause()`), relying on browser-native `echoCancellation: true` to suppress linear speaker bleed.
     2. **Acoustic Startup Guard (400ms Debounce):** Discard speech onset triggers occurring within the first 400ms of assistant audio to absorb speaker startup energy and room reflections.
     3. **Asymmetric Speech Energy/Probability Gate:** While `state === 'speaking'`, elevate the speech trigger criteria (e.g., require sustained speech frames $> 18$ / ~576ms and volume $> 0.28$) so residual speaker leakage is ignored while direct, close-proximity human vocal cord formants confidently trigger `ws.interrupt()` and `audioPlayback.stop()`.
-    4. **Instant Cancellation & Drain:** When user voice interruption is validated, instantly halt Web Audio playback, emit `{"type": "interrupt"}` over the WebSocket, and transition directly into `listening` to process the user's new question.
 * **Codebase Reference:** [`frontend/src/hooks/useVoicePipeline.js`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVoicePipeline.js), [`frontend/src/hooks/useVAD.js`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/hooks/useVAD.js), [`frontend/src/App.jsx`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/frontend/src/App.jsx), and [`backend/main.py`](file:///c:/Users/bharg/python%20work/Voice%20AI%20prototype/backend/main.py)  
-* **Production Status:** Evaluated & Archived. The production system maintains the rock-solid, echo-immune **[P-14] State-Aware VAD Suppression & One-Click Voice Orb Barge-In** baseline for zero-feedback conversational turn-taking.
+* **Production Status:** ⚠️ **ACTIVE KNOWN LIMITATION (PARTIAL IMPLEMENTATION).** The current codebase maintains `vadRef.current?.pause()` in `useVoicePipeline.js` to ensure zero feedback loops. As a result, **voice-activated barge-in is currently NOT functioning properly** and remains an open engineering item for future hardware-calibrated AEC.
 
 ---
 
