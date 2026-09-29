@@ -11,6 +11,7 @@ function generateId() {
   return 'conv_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
 }
 
+// useSession: Decouples chat history persistence from the real-time audio pipeline, managing active session IDs in localStorage and SQLite.
 export function useSession() {
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(() => {

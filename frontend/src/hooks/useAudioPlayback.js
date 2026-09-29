@@ -14,6 +14,7 @@ import { useRef, useCallback } from 'react';
 let sharedAudioCtx = null;
 let sharedAnalyser = null;
 
+// getSharedAudioContext: Maintains a shared singleton AudioContext to prevent the browser's 6-hardware-context exhaustion crash during rapid streaming.
 function getSharedAudioContext() {
   try {
     if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
@@ -50,6 +51,7 @@ export function useAudioPlayback({ onStart, onEnd, onVolumeChange, onTextProgres
   const rafRef                 = useRef(null);
   const playResolveRef         = useRef(null);
 
+  // startPlaybackLoop: High-precision 60fps clock measuring current audio playback to drive Voice Orb volume glow and word-by-word subtitle pacing.
   const startPlaybackLoop = useCallback(() => {
     if (rafRef.current) return;
     const { ctx, analyser } = getSharedAudioContext();
@@ -120,6 +122,7 @@ export function useAudioPlayback({ onStart, onEnd, onVolumeChange, onTextProgres
     }
   }, []);
 
+  // _playNext: Dequeues the next audio chunk, connects it to the shared analyser node, and chains playback continuously until the queue is drained.
   const _playNext = useCallback(async () => {
     if (queueRef.current.length === 0) {
       isPlayingRef.current = false;
@@ -237,6 +240,7 @@ export function useAudioPlayback({ onStart, onEnd, onVolumeChange, onTextProgres
 
   }, [onStart, onEnd, onVolumeChange, onTextProgress, startPlaybackLoop, _cleanupCurrent]);
 
+  // enqueue: Pushes incoming sentence audio and text into the sequential queue and kicks off the playback loop if the audio engine is idle.
   const enqueue = useCallback((item, maybeText = '') => {
     if (!item) return;
 
@@ -260,6 +264,7 @@ export function useAudioPlayback({ onStart, onEnd, onVolumeChange, onTextProgres
     }
   }, [_playNext]);
 
+  // stop: Instantly silences audio output, empties the waiting sentence queue, and resets volume levels in under 20 milliseconds.
   const stop = useCallback(() => {
     queueRef.current = [];
     isPlayingRef.current = false;

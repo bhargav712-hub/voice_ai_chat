@@ -49,6 +49,7 @@ export function useVoicePipeline({
     }
   }, [sessionId, history]);
 
+  // go: Guardrail state machine transitioner that prevents redundant re-renders while keeping real-time audio refs synchronized with React UI state.
   const go = useCallback((s) => {
     stateRef.current = s;
     setState(s);
@@ -85,6 +86,7 @@ export function useVoicePipeline({
   });
 
   // ── Transport: Persistent Bidirectional WebSocket ──────────────────────────
+  // connectWebSocket: Establishes the persistent full-duplex /ws/conversation socket, routing incoming transcripts to the UI and streaming MP3 chunks into playback.
   const connectWebSocket = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -113,7 +115,6 @@ export function useVoicePipeline({
       },
 
       onInterrupted: () => {
-        console.log('[WS] Interruption acknowledged by server');
       },
 
       onError: (err) => {
@@ -135,6 +136,7 @@ export function useVoicePipeline({
   }, [audioPlayback, go, onAssistantSentence, onAssistantDone, onUserTranscript]);
 
   // ── Process Audio Payload ──────────────────────────────────────────────────
+  // processAudio: Filters noise clicks (<400 bytes), shifts pipeline to 'processing', and transmits the binary WAV audio blob over the WebSocket.
   const processAudio = useCallback(async (audioBlob) => {
     if (isMutedRef.current || !audioBlob || audioBlob.size === 0) {
       if (isVoiceModeRef.current && !isMutedRef.current) {
@@ -268,6 +270,7 @@ export function useVoicePipeline({
     }
   }, [go, startListeningInternal, vad]);
 
+  // enterVoiceMode: Pre-warms the shared Web Audio context via user gesture, opens the WebSocket, and unpauses the microphone for hands-free listening.
   const enterVoiceMode = useCallback(() => {
     setIsVoiceMode(true);
     isVoiceModeRef.current = true;
@@ -279,6 +282,7 @@ export function useVoicePipeline({
     startListeningInternal();
   }, [audioPlayback, connectWebSocket, startListeningInternal]);
 
+  // exitVoiceMode: Shuts down active microphone tracks, disconnects the WebSocket, drains the audio playback queue, and resets pipeline state to 'idle'.
   const exitVoiceMode = useCallback(() => {
     setIsVoiceMode(false);
     isVoiceModeRef.current = false;
@@ -299,6 +303,7 @@ export function useVoicePipeline({
     setIsUserSpeaking(false);
   }, [audioPlayback, go, vad]);
 
+  // interrupt: Emergency barge-in cutoff that instantly halts local Web Audio output and sends an interrupt frame to abort backend generation.
   // P-14: Instant Voice Orb Click-to-Interrupt
   const interrupt = useCallback(() => {
     if (wsRef.current?.isConnected) {

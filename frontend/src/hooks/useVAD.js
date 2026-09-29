@@ -17,6 +17,7 @@ const FALLBACK_SPEECH_THRESHOLD  = 0.018;
 const FALLBACK_SILENCE_THRESHOLD = 0.010;
 const FALLBACK_SILENCE_MS        = 1200;
 
+// useVAD: Manages microphone permissions with hardware echo cancellation and orchestrates the dual-engine (Silero neural + RMS fallback) voice detection.
 export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
   const micVadRef        = useRef(null);
   const audioCtxRef      = useRef(null);
@@ -48,6 +49,7 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
     }
   }
 
+  // startVolumeAnalyser: Measures 60fps microphone RMS volume for Orb visual reactivity and runs hands-free fallback recording if WebAssembly fails.
   /** Starts volume analyzer on the audio stream for the fluid Voice Orb visualizer */
   function startVolumeAnalyser(stream) {
     stopAnalyser();
@@ -141,6 +143,7 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
 
   const speechStartTimestampRef = useRef(null);
 
+  // startSileroVAD / start: Runs the in-browser Silero v5 ONNX neural network inside a Web Worker to detect genuine vocal cords and emit 16kHz WAV speech blobs.
   /** Start VAD with Silero VAD neural model */
   const start = useCallback(async (stream) => {
     stop();
@@ -151,7 +154,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
     startVolumeAnalyser(stream);
 
     try {
-      console.log('[VAD] Initializing Silero VAD v5 (ONNX WebAssembly)...');
       const vadInstance = await MicVAD.new({
         getStream: async () => stream,
         pauseStream: async () => {},
@@ -171,7 +173,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
           if (isMutedRef.current) return;
           const now = performance.now();
           speechStartTimestampRef.current = now;
-          console.log('[Silero VAD] Speech started at', now.toFixed(1), 'ms');
           isSpeakingRef.current = true;
           onSpeechStart?.();
         },
@@ -180,7 +181,6 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
           const endNow = performance.now();
           const startNow = speechStartTimestampRef.current || endNow;
           const speechDuration = Math.round(endNow - startNow);
-          console.log('[Silero VAD] Speech ended. Duration:', speechDuration, 'ms. Samples:', audio?.length);
           isSpeakingRef.current = false;
 
           let wavBlob = null;
@@ -198,14 +198,12 @@ export function useVAD({ onSpeechStart, onSpeechEnd, onVolumeChange } = {}) {
           });
         },
         onVADMisfire: () => {
-          console.log('[Silero VAD] Misfire (too short, ignored)');
           isSpeakingRef.current = false;
         },
       });
 
       micVadRef.current = vadInstance;
       isFallbackRef.current = false;
-      console.log('[VAD] Silero VAD v5 active.');
 
     } catch (err) {
       console.warn('[VAD] Silero VAD initialization failed, falling back to Web Audio RMS:', err);

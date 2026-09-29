@@ -76,69 +76,6 @@ export function base64ToBlob(base64, contentType = 'audio/mpeg') {
   return new Blob(byteArrays, { type: contentType });
 }
 
-/**
- * POST /api/chat-stream
- * Streams sentence-level SSE events { index, text, audio }
- * Enables instant sentence playback & live transcript updates.
- */
-export async function streamChat({ message, history = [], conversationId, signal, onSentence, onDone, onError }) {
-  try {
-    const res = await fetch(`${BASE}/api/chat-stream`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ message, history, conversation_id: conversationId }),
-      signal,
-    });
-    await handleError(res);
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    let currentEvent = 'message';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep last incomplete line in buffer
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.replace('event:', '').trim();
-        } else if (trimmed.startsWith('data:')) {
-          const dataStr = trimmed.replace('data:', '').trim();
-          try {
-            const data = JSON.parse(dataStr);
-            if (currentEvent === 'sentence') {
-              const audioBlob = data.audio ? base64ToBlob(data.audio, 'audio/mpeg') : null;
-              onSentence?.({ index: data.index, text: data.text, audioBlob });
-            } else if (currentEvent === 'done') {
-              onDone?.(data);
-            } else if (currentEvent === 'error') {
-              onError?.(new Error(data.error || 'Stream error'));
-            }
-          } catch (parseErr) {
-            console.warn('[API] Could not parse SSE line:', dataStr, parseErr);
-          }
-        }
-      }
-    }
-    onDone?.({ finished: true });
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      // User interrupted/barge-in — expected behavior
-      return;
-    }
-    onError?.(err);
-    throw err;
-  }
-}
-
 /** GET /api/health → { status: "ok" } */
 export async function health() {
   const res = await fetch(`${BASE}/api/health`);
@@ -150,6 +87,7 @@ export async function health() {
  * Speech-to-Speech Conversation Storage APIs
  */
 
+// getConversations: Fetches all stored voice session summaries from the backend SQLite database.
 export async function getConversations() {
   const res = await fetch(`${BASE}/api/conversations`);
   await handleError(res);
@@ -163,6 +101,7 @@ export async function getConversation(id) {
   return res.json();
 }
 
+// createConversation: Pre-creates a new conversational speech session in backend storage.
 export async function createConversation(title, id) {
   const res = await fetch(`${BASE}/api/conversations`, {
     method: 'POST',
@@ -173,6 +112,7 @@ export async function createConversation(title, id) {
   return res.json();
 }
 
+// deleteConversation: Removes a session and all its messages with cascading delete from backend SQLite.
 export async function deleteConversation(id) {
   const res = await fetch(`${BASE}/api/conversations/${id}`, {
     method: 'DELETE',
@@ -185,6 +125,7 @@ export async function deleteConversation(id) {
  * Creates a bidirectional WebSocket connection to /ws/conversation
  * Handles continuous speech-to-speech lifecycle, barge-in, and auto-reconnection.
  */
+// createVoiceSocket: Manages the bidirectional WebSocket connection lifecycle, handling automatic 20s keepalive pings and typed message event dispatching.
 export function createVoiceSocket({
   conversationId,
   history = [],
@@ -214,7 +155,6 @@ export function createVoiceSocket({
   }
 
   ws.onopen = () => {
-    console.log('[WS] Connected to /ws/conversation');
     // Handshake with current session context
     ws.send(JSON.stringify({
       type: 'init',
@@ -269,7 +209,6 @@ export function createVoiceSocket({
 
   ws.onclose = (event) => {
     clearInterval(pingInterval);
-    console.log('[WS] Closed (code: ' + event.code + ', reason: ' + event.reason + ')');
     if (!isClosedManually) {
       onClose?.(event);
     }
